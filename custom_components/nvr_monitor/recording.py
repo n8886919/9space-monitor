@@ -111,6 +111,7 @@ class DahuaRecordingClient:
         now = datetime.now(LOCAL_TZ)
         start = now - timedelta(hours=24)
         object_id = ""
+        stage = "factory_create"
         try:
             object_id = _parse_object_id(
                 self._get(
@@ -118,6 +119,7 @@ class DahuaRecordingClient:
                     [("action", "factory.create")],
                 )
             )
+            stage = "find_file"
             started = self._get(
                 "/cgi-bin/mediaFileFind.cgi",
                 [
@@ -140,6 +142,7 @@ class DahuaRecordingClient:
 
             files: list[dict[str, str]] = []
             while len(files) < MAX_FILES:
+                stage = "find_next_file"
                 page = _parse_items(
                     self._get(
                         "/cgi-bin/mediaFileFind.cgi",
@@ -171,7 +174,11 @@ class DahuaRecordingClient:
                 "recording_truncated": len(files) >= MAX_FILES,
             }
         except HTTPError as err:
-            error = "invalid_auth" if err.code == 401 else f"http_{err.code}"
+            error = (
+                "invalid_auth"
+                if err.code == 401
+                else f"{stage}_http_{err.code}"
+            )
         except (URLError, TimeoutError):
             error = "cannot_connect"
         except (OSError, ValueError) as err:
