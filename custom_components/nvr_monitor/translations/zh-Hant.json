@@ -1,5 +1,5 @@
 {
-  "title": "九宮格 NVR 監控",
+  "title": "NVR 監控",
   "config": {
     "abort": {
       "already_configured": "這台 NVR 已設定。",
