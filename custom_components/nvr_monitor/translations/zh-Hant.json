@@ -1,0 +1,118 @@
+{
+  "title": "九宮格 NVR 監控",
+  "config": {
+    "abort": {
+      "already_configured": "這台 NVR 已設定。",
+      "reconfigure_successful": "設定已更新。"
+    },
+    "error": {
+      "already_configured": "這台 NVR 已設定。",
+      "cannot_connect": "無法連線到 NVR 的 RTSP 連接埠。",
+      "invalid_auth": "NVR 使用者名稱或密碼錯誤。",
+      "unknown": "發生未預期的錯誤。"
+    },
+    "step": {
+      "user": {
+        "title": "連接 Dahua NVR",
+        "description": "密碼由 Home Assistant 保存，僅用於區域網路內的 RTSP 探測。",
+        "data": {
+          "nvr_host": "NVR 位址",
+          "nvr_http_port": "NVR HTTP 連接埠",
+          "nvr_rtsp_port": "NVR RTSP 連接埠",
+          "username": "使用者名稱",
+          "password": "密碼"
+        }
+      },
+      "reconfigure": {
+        "title": "修改 NVR 連線",
+        "data": {
+          "nvr_host": "NVR 位址",
+          "nvr_http_port": "NVR HTTP 連接埠",
+          "nvr_rtsp_port": "NVR RTSP 連接埠",
+          "username": "使用者名稱",
+          "password": "密碼"
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "camera": {
+      "entry_type": "攝影機",
+      "initiate_flow": {
+        "user": "新增攝影機"
+      },
+      "abort": {
+        "reconfigure_successful": "攝影機設定已更新。"
+      },
+      "error": {
+        "invalid_ip": "請輸入有效的 IPv4 或 IPv6 位址。",
+        "duplicate_ip": "這個攝影機 IP 已設定。",
+        "duplicate_channel": "這個 NVR 頻道已設定。"
+      },
+      "step": {
+        "user": {
+          "title": "新增攝影機",
+          "description": "系統只探測已啟用的攝影機；名稱、型號與群組可不填。",
+          "data": {
+            "camera_ip": "攝影機 IP",
+            "nvr_channel": "NVR 頻道",
+            "camera_name": "顯示名稱",
+            "model": "型號",
+            "group": "群組",
+            "enabled": "啟用監控",
+            "camera_rtsp_port": "攝影機 RTSP 連接埠",
+            "camera_onvif_port": "攝影機 ONVIF 連接埠"
+          }
+        },
+        "reconfigure": {
+          "title": "修改攝影機",
+          "data": {
+            "camera_ip": "攝影機 IP",
+            "nvr_channel": "NVR 頻道",
+            "camera_name": "顯示名稱",
+            "model": "型號",
+            "group": "群組",
+            "enabled": "啟用監控",
+            "camera_rtsp_port": "攝影機 RTSP 連接埠",
+            "camera_onvif_port": "攝影機 ONVIF 連接埠"
+          }
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "network_reachable": { "name": "網路可達" },
+      "camera_rtsp_alive": { "name": "攝影機 RTSP 有回應" },
+      "nvr_live_video": { "name": "NVR 即時畫面" },
+      "camera_problem": { "name": "攝影機異常" },
+      "recording_recent": { "name": "24 小時內有錄影" },
+      "recording_query_problem": { "name": "錄影查詢異常" },
+      "onvif_port": { "name": "ONVIF 連接埠" },
+      "rtsp_port": { "name": "RTSP 連接埠" },
+      "motion_active": { "name": "移動偵測" },
+      "video_loss": { "name": "影像遺失" },
+      "video_blind": { "name": "影像遮蔽" }
+    },
+    "sensor": {
+      "online_rate_24h": { "name": "24 小時在線率" },
+      "offline_count_24h": { "name": "24 小時斷線次數" },
+      "rtt_average_24h": { "name": "24 小時平均 RTT" },
+      "jitter_average_24h": { "name": "24 小時平均 Jitter" },
+      "packet_loss_average_24h": { "name": "24 小時平均丟包" },
+      "history_observed": { "name": "已觀察時間" },
+      "diagnostic_status": { "name": "診斷狀態" },
+      "nvr_first_packet": { "name": "NVR 首個 RTP 封包" },
+      "nvr_probe_duration": { "name": "NVR 探測耗時" },
+      "camera_rtsp_response": { "name": "攝影機 RTSP 回應時間" },
+      "motion_count_24h": { "name": "24 小時移動事件" },
+      "last_motion": { "name": "上次移動" },
+      "last_dahua_event": { "name": "上次 Dahua 事件" },
+      "recording_count_24h": { "name": "24 小時錄影檔數" },
+      "recording_coverage_24h": { "name": "24 小時錄影覆蓋率" },
+      "recording_gap_count_24h": { "name": "24 小時錄影中斷數" },
+      "last_recording": { "name": "上次錄影" },
+      "last_recording_age": { "name": "距上次錄影" }
+    }
+  }
+}

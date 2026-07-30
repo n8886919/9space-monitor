@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate
+        run: |
+          set -euo pipefail
+          python -m compileall -q custom_components/nvr_monitor
+          python -m unittest discover -s tests -v
+
+      - name: Build installation archive
+        run: |
+          set -euo pipefail
+          mkdir -p dist/custom_components
+          cp -R \
+            custom_components/nvr_monitor \
+            dist/custom_components/
+          (
+            cd dist
+            zip -qr ../nvr_monitor.zip custom_components \
+              -x "*/__pycache__/*" "*.pyc"
+          )
+          sha256sum nvr_monitor.zip \
+            > nvr_monitor.zip.sha256
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            nvr_monitor.zip \
+            nvr_monitor.zip.sha256 \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME"
