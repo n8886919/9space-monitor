@@ -52,6 +52,34 @@ recording = _load_recording_module()
 class RecordingErrorTests(unittest.TestCase):
     """Ensure HTTP failures retain the Dahua CGI stage."""
 
+    def test_find_file_uses_configured_one_based_channel(self) -> None:
+        for channel in (1, 7, 14):
+            with self.subTest(channel=channel):
+                client = object.__new__(recording.DahuaRecordingClient)
+                find_file_params = {}
+
+                def fake_get(_path, params):
+                    action = dict(params)["action"]
+                    if action == "factory.create":
+                        return "result=123"
+                    if action == "findFile":
+                        find_file_params.update(dict(params))
+                        return "OK"
+                    if action == "findNextFile":
+                        return "found=0"
+                    return "OK"
+
+                client._get = fake_get
+                _, result = client._probe_one(
+                    CameraConfig(channel=channel)
+                )
+
+                self.assertTrue(result["recording_query_ok"])
+                self.assertEqual(
+                    str(channel),
+                    find_file_params["condition.Channel"],
+                )
+
     def _probe_error(self, failing_action: str, status: int = 400) -> str:
         client = object.__new__(recording.DahuaRecordingClient)
 

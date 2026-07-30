@@ -125,7 +125,7 @@ class DahuaRecordingClient:
                 [
                     ("action", "findFile"),
                     ("object", object_id),
-                    ("condition.Channel", str(camera.channel - 1)),
+                    ("condition.Channel", str(camera.channel)),
                     (
                         "condition.StartTime",
                         start.strftime("%Y-%m-%d %H:%M:%S"),
