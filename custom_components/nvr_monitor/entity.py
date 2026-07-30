@@ -1,4 +1,4 @@
-"""Base entities for Nine Space NVR Monitor."""
+"""Base entities for NVR Monitor."""
 
 from __future__ import annotations
 
