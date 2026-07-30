@@ -94,7 +94,7 @@ def _encode_request(
 ) -> bytes:
     headers = {
         "CSeq": str(cseq),
-        "User-Agent": "Nine-Space-NVR-Monitor/0.1",
+        "User-Agent": "NVR-Monitor/0.1",
     }
     if authorization:
         headers["Authorization"] = authorization
