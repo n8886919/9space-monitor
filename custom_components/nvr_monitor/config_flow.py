@@ -1,4 +1,4 @@
-"""Config flow for Nine Space NVR Monitor."""
+"""Config flow for NVR Monitor."""
 
 from __future__ import annotations
 
@@ -122,7 +122,7 @@ def _validate_nvr(user_input: dict[str, Any]) -> None:
     ).validate_nvr()
 
 
-class NineSpaceNvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
+class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the integration config flow."""
 
     VERSION = 1
@@ -170,7 +170,7 @@ class NineSpaceNvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                     data = dict(user_input)
                     data[CONF_NVR_HOST] = host
                     return self.async_create_entry(
-                        title=f"Nine Space NVR ({host})", data=data
+                        title=f"NVR Monitor ({host})", data=data
                     )
 
         return self.async_show_form(
@@ -210,7 +210,7 @@ class NineSpaceNvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                     data[CONF_NVR_HOST] = host
                     return self.async_update_reload_and_abort(
                         entry,
-                        title=f"Nine Space NVR ({host})",
+                        title=f"NVR Monitor ({host})",
                         data=data,
                     )
 
