@@ -1,4 +1,4 @@
-"""Binary sensors for Nine Space NVR Monitor."""
+"""Binary sensors for NVR Monitor."""
 
 from __future__ import annotations
 
