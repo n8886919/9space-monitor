@@ -1,4 +1,4 @@
-"""The Nine Space NVR Monitor integration."""
+"""The NVR Monitor integration."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ NvrMonitorConfigEntry: TypeAlias = ConfigEntry[NvrMonitorRuntimeData]
 async def async_setup_entry(
     hass: HomeAssistant, entry: NvrMonitorConfigEntry
 ) -> bool:
-    """Set up Nine Space NVR Monitor from a config entry."""
+    """Set up NVR Monitor from a config entry."""
     nvr = NvrConfig(
         host=str(entry.data[CONF_NVR_HOST]),
         http_port=int(
