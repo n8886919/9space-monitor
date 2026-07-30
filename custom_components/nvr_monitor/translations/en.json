@@ -1,5 +1,5 @@
 {
-  "title": "Nine Space NVR Monitor",
+  "title": "NVR Monitor",
   "config": {
     "abort": {
       "already_configured": "This NVR is already configured.",
