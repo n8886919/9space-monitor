@@ -1,4 +1,4 @@
-"""Constants for Nine Space NVR Monitor."""
+"""Constants for NVR Monitor."""
 
 from datetime import timedelta
 
