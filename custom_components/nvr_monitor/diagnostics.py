@@ -1,4 +1,4 @@
-"""Diagnostics support for Nine Space NVR Monitor."""
+"""Diagnostics support for NVR Monitor."""
 
 from __future__ import annotations
 
