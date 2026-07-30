@@ -1,4 +1,4 @@
-"""Sensors for Nine Space NVR Monitor."""
+"""Sensors for NVR Monitor."""
 
 from __future__ import annotations
 
