@@ -1,4 +1,4 @@
-"""Update coordinators for Nine Space NVR Monitor."""
+"""Update coordinators for NVR Monitor."""
 
 from __future__ import annotations
 
