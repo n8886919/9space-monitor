@@ -1,4 +1,4 @@
-"""Data models for Nine Space NVR Monitor."""
+"""Data models for NVR Monitor."""
 
 from __future__ import annotations
 
