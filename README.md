@@ -121,23 +121,37 @@ Home Assistant
 
 ## Current milestone
 
-### M1：合併 repository，不改行為
+### M1：合併 repository，不改行為（已完成）
 
-- [ ] 將 `9space-snapshot-addon/9space_snapshot_api` 複製到本 repository 根目錄。
-- [ ] 保留 add-on slug `9space_snapshot_addon`。
-- [ ] 保留 container port `8000` 與目前 host port `8122`。
-- [ ] 保留舊 `GET /api/camera/{camera_id}` response。
-- [ ] 確認 add-on 可 build、start，舊 endpoint 可取得 snapshot。
-- [ ] 不修改 integration 行為。
+- [x] 將 `9space-snapshot-addon/9space_snapshot_api` 複製到本 repository 根目錄。
+- [x] 保留 add-on slug `9space_snapshot_addon`。
+- [x] 保留 container port `8000` 與目前 host port `8122`。
+- [x] 保留舊 `GET /api/camera/{camera_id}` response。
+- [x] 確認 add-on 可 build、start，舊 endpoint 可取得 snapshot。
+- [x] 不修改 integration 行為。
 
-完成後再進 M2。
+### M2A：Add-on API 骨架（monorepo 新 add-on，dev port 8222）
 
-### M2：建立最小 local API 邊界
+開發與測試只使用新的 `9space_snapshot_api_v2`（slug `9space_snapshot_addon_v2`，version `1.0.0`），現有 `9space_snapshot_api`（slug `9space_snapshot_addon`，host port `8122`）維持原樣，不修改、不停止，供同事繼續使用。
 
-- [ ] Add-on 提供 `API.md` 所列的最小 endpoint。
-- [ ] 舊 endpoint 仍使用原本 response 格式。
-- [ ] 把 NVR RTSP live-video probe 搬到 add-on。
-- [ ] 把 Dahua recording query 搬到 add-on。
+> `9space_snapshot_api_v2` 只是開發期間為了與 8122 舊版並存的暫時副本，不是最終架構。等 M3 完成、同事切換到新 API 後，只保留一份 add-on source（移除其中一份重複程式碼），不長期維護兩份。
+
+- [x] 新增 `9space_snapshot_api_v2` add-on，內含 `/healthz`、`/api/v1/channels`、`/api/v1/channels/{channel_id}`、`/api/v1/channels/{channel_id}/snapshot`。
+- [x] 新增 options：`nvr_http_port`（Dahua NVR 自己的 HTTP/CGI port，預設 `80`，與 add-on 監聽 port 無關）、`channel_count`（預設 `14`）。add-on 本身固定監聽 container port `8000`（host port `8222`），不可由任何 option 改變。
+- [x] 舊 `GET /api/camera/{camera_id}` 的 path、status code、JSON、multipart 與 JPEG response 完全不變，並在新 add-on 內以相容測試鎖定。
+- [x] 不搬 NVR RTSP live-video probe（`live_video` 目前固定回 `null`）。
+- [x] 不搬 Dahua recording query（`recording_query_ok`／`recording_recent`／`last_recording` 目前固定回 `false`／`null`）。
+- [x] 不修改 integration。
+- [x] 不部署，只在本機以 fake-based unit tests 驗證。
+
+完成後再進 M2B。
+
+### M2B：搬移 NVR live probe 與 recording query（尚未開始）
+
+- [ ] 把 NVR RTSP live-video probe 搬到 add-on，預設每 5 分鐘執行一次。
+- [ ] 把 Dahua recording query 搬到 add-on，預設每 15 分鐘執行一次。
+- [ ] `/api/v1/channels*` 改為讀取 add-on 保存的最新背景結果，不讓每次 GET 對 14 個 channel 同步執行完整 probe。
+- [ ] Snapshot 維持 demand-driven 與現有 cache 行為（M2A 已共用同一套 cache/capture 路徑，M2B 不重做）。
 - [ ] Add-on 對外 response 不包含 credentials、RTSP URL 或完整 ffmpeg stderr。
 - [ ] 使用少量 fake-based unit tests，不要求真實 NVR。
 

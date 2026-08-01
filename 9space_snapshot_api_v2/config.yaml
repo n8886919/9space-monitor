@@ -1,0 +1,44 @@
+name: 9Space Snapshot Addon (v2 dev)
+version: "1.0.0"
+slug: 9space_snapshot_addon_v2
+description: >-
+  M2 development build of the 9Space local API. Adds /healthz and /api/v1
+  channel endpoints alongside the unchanged legacy snapshot endpoint. Runs on
+  a separate host port from the production 9space_snapshot_addon so it does
+  not affect colleagues currently using port 8122. The add-on itself always
+  listens on container port 8000; nvr_http_port configures the Dahua NVR's
+  own HTTP/CGI port, it does not change where this add-on listens.
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: services
+boot: auto
+init: false
+
+ports:
+  8000/tcp: 8222
+
+options:
+  nvr_host: "192.168.0.100"
+  rtsp_port: 554
+  username: "admin"
+  password: "password"
+  subtype: 0
+  health_timeout_ms: 10000
+  jpeg_qv: 32
+  max_concurrency: 2
+  nvr_http_port: 80
+  channel_count: 14
+
+schema:
+  nvr_host: str
+  rtsp_port: int
+  username: str
+  password: password
+  subtype: int
+  health_timeout_ms: int
+  jpeg_qv: int
+  max_concurrency: int
+  nvr_http_port: int
+  channel_count: int
