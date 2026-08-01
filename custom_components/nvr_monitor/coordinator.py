@@ -33,6 +33,7 @@ from .recording import DahuaRecordingClient
 
 _LOGGER = logging.getLogger(__name__)
 _HISTORY_SECONDS = HISTORY_HOURS * 3600
+_ONE_HOUR_SECONDS = 3600
 
 
 class CameraNetworkCoordinator(DataUpdateCoordinator[ProbeResults]):
@@ -125,6 +126,8 @@ class CameraNetworkCoordinator(DataUpdateCoordinator[ProbeResults]):
             return {
                 "online_rate_24h": None,
                 "offline_count_24h": 0,
+                "rtt_avg_1h_ms": None,
+                "packet_loss_avg_1h_pct": None,
                 "rtt_avg_24h_ms": None,
                 "jitter_avg_24h_ms": None,
                 "packet_loss_avg_24h_pct": None,
@@ -138,13 +141,28 @@ class CameraNetworkCoordinator(DataUpdateCoordinator[ProbeResults]):
             if not state and (index == 0 or online[index - 1])
         )
 
-        def average(position: int) -> float | None:
+        def average(
+            window_samples: list[list[float | int | None]],
+            position: int,
+            precision: int = 2,
+        ) -> float | None:
             values = [
                 float(sample[position])
-                for sample in samples
+                for sample in window_samples
                 if sample[position] is not None
             ]
-            return round(sum(values) / len(values), 2) if values else None
+            return (
+                round(sum(values) / len(values), precision)
+                if values
+                else None
+            )
+
+        one_hour_cutoff = now - _ONE_HOUR_SECONDS
+        samples_1h = [
+            sample
+            for sample in samples
+            if float(sample[0]) >= one_hour_cutoff
+        ]
 
         observed_seconds = min(
             _HISTORY_SECONDS, max(0.0, now - float(samples[0][0]))
@@ -154,9 +172,11 @@ class CameraNetworkCoordinator(DataUpdateCoordinator[ProbeResults]):
                 sum(online) / len(online) * 100, 2
             ),
             "offline_count_24h": offline_count,
-            "rtt_avg_24h_ms": average(2),
-            "jitter_avg_24h_ms": average(3),
-            "packet_loss_avg_24h_pct": average(4),
+            "rtt_avg_1h_ms": average(samples_1h, 2, 1),
+            "packet_loss_avg_1h_pct": average(samples_1h, 4, 1),
+            "rtt_avg_24h_ms": average(samples, 2, 1),
+            "jitter_avg_24h_ms": average(samples, 3),
+            "packet_loss_avg_24h_pct": average(samples, 4, 1),
             "history_samples": len(samples),
             "observed_hours": round(observed_seconds / 3600, 2),
         }
@@ -242,6 +262,50 @@ class CameraServiceCoordinator(DataUpdateCoordinator[ProbeResults]):
             if subentry_id in active_ids
         }
 
+    @staticmethod
+    def _aggregate_live_metrics(
+        samples: list[dict[str, Any]], now: float
+    ) -> dict[str, float | int | None]:
+        if not samples:
+            return {
+                "live_online_rate_24h": None,
+                "nvr_live_video_disconnect_count_24h": 0,
+            }
+
+        states = [
+            bool(sample.get("nvr_live_video"))
+            for sample in samples
+            if sample.get("nvr_live_video") is not None
+        ]
+        if not states:
+            return {
+                "live_online_rate_24h": None,
+                "nvr_live_video_disconnect_count_24h": 0,
+            }
+
+        observed_seconds = min(
+            _HISTORY_SECONDS,
+            max(0.0, now - float(samples[0].get("ts", now))),
+        )
+        if observed_seconds <= 0:
+            return {
+                "live_online_rate_24h": None,
+                "nvr_live_video_disconnect_count_24h": 0,
+            }
+
+        disconnect_count = sum(
+            1
+            for previous, current in zip(states, states[1:], strict=False)
+            if previous and not current
+        )
+
+        return {
+            "live_online_rate_24h": round(
+                sum(states) / len(states) * 100, 1
+            ),
+            "nvr_live_video_disconnect_count_24h": disconnect_count,
+        }
+
     async def _async_update_data(self) -> ProbeResults:
         try:
             results = await self.hass.async_add_executor_job(
@@ -281,6 +345,11 @@ class CameraServiceCoordinator(DataUpdateCoordinator[ProbeResults]):
                         for field in retained_fields
                     },
                 }
+            )
+            result.update(
+                self._aggregate_live_metrics(
+                    self._history[subentry_id], now
+                )
             )
         self._updates_since_save += 1
         if (

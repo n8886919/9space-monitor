@@ -54,6 +54,22 @@ NETWORK_SENSORS = (
         value_fn=lambda data: data.get("offline_count_24h"),
     ),
     CameraSensorDescription(
+        key="rtt_average_1h",
+        translation_key="rtt_average_1h",
+        source="network",
+        native_unit_of_measurement="ms",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.get("rtt_avg_1h_ms"),
+    ),
+    CameraSensorDescription(
+        key="packet_loss_average_1h",
+        translation_key="packet_loss_average_1h",
+        source="network",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.get("packet_loss_avg_1h_pct"),
+    ),
+    CameraSensorDescription(
         key="rtt_average_24h",
         translation_key="rtt_average_24h",
         source="network",
@@ -88,6 +104,23 @@ NETWORK_SENSORS = (
 )
 
 SERVICE_SENSORS = (
+    CameraSensorDescription(
+        key="daily_online_rate",
+        translation_key="daily_online_rate",
+        source="service",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.get("live_online_rate_24h"),
+    ),
+    CameraSensorDescription(
+        key="nvr_live_video_disconnect_count_24h",
+        translation_key="nvr_live_video_disconnect_count_24h",
+        source="service",
+        native_unit_of_measurement="times",
+        value_fn=lambda data: data.get(
+            "nvr_live_video_disconnect_count_24h"
+        ),
+    ),
     CameraSensorDescription(
         key="diagnostic_status",
         translation_key="diagnostic_status",

@@ -12,5 +12,5 @@
   "requirements": [
     "icmplib==3.0"
   ],
-  "version": "0.1.2"
+  "version": "0.1.5"
 }
