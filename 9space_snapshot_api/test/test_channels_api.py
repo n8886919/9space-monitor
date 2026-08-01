@@ -21,6 +21,8 @@ ADDON_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ADDON_DIR))
 
 import main  # noqa: E402
+import live_probe  # noqa: E402
+import recording_query  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 
@@ -39,17 +41,48 @@ FAKE_OPTS = {
 }
 
 
+def _fake_live_probe_channel(channel_id, nvr):
+    # Deterministic "NVR reachable, no video yet" fake so tests never
+    # depend on real sockets or a real NVR.
+    return {"live_video": False, "error_code": "no_video"}
+
+
+def _fake_recording_query_channel(channel_id, nvr):
+    # Deterministic "query ok, nothing recent" fake.
+    return {
+        "recording_query_ok": True,
+        "recording_recent": False,
+        "last_recording": None,
+        "error_code": None,
+    }
+
+
 class AddonApiTests(unittest.TestCase):
     def setUp(self) -> None:
         main._cache.clear()
         main._sem = None
+        main._channel_store.clear()
         self._opts_patch = patch.object(main, "_load_options", return_value=dict(FAKE_OPTS))
         self._opts_patch.start()
+        self._live_probe_patch = patch.object(
+            live_probe, "probe_channel", side_effect=_fake_live_probe_channel
+        )
+        self._live_probe_patch.start()
+        self._recording_query_patch = patch.object(
+            recording_query, "query_channel", side_effect=_fake_recording_query_channel
+        )
+        self._recording_query_patch.start()
         self._client_cm = TestClient(main.app)
         self.client = self._client_cm.__enter__()  # triggers startup event
+        # Startup's first probe rounds run in the background; wait for them
+        # so assertions below are deterministic instead of racing the task.
+        self.assertTrue(main._live_first_round_ready.wait(timeout=5))
+        self.assertTrue(main._recording_first_round_ready.wait(timeout=5))
 
     def tearDown(self) -> None:
         self._client_cm.__exit__(None, None, None)
+        self._recording_query_patch.stop()
+        self._live_probe_patch.stop()
         self._opts_patch.stop()
 
     def test_healthz_ok(self) -> None:
@@ -78,9 +111,9 @@ class AddonApiTests(unittest.TestCase):
             [1, 2, 3],
         )
         for channel in body:
-            self.assertIsNone(channel["live_video"])
-            self.assertFalse(channel["recording_query_ok"])
-            self.assertIsNone(channel["recording_recent"])
+            self.assertEqual(channel["live_video"], False)
+            self.assertTrue(channel["recording_query_ok"])
+            self.assertEqual(channel["recording_recent"], False)
             self.assertIsNone(channel["last_recording"])
 
     def test_get_channel_not_found(self) -> None:

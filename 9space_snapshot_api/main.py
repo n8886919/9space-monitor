@@ -1,14 +1,17 @@
 import asyncio
 import json
 import os
+import threading
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Path, Response
 from fastapi.responses import JSONResponse
+
+import background
+from channel_state import ChannelStateStore
 
 app = FastAPI(title="Dahua RTSP Snapshot API")
 
@@ -18,6 +21,16 @@ OPTIONS_PATH = "/data/options.json"
 QUEUE_TIMEOUT_MS = 300
 
 _sem: Optional[asyncio.Semaphore] = None
+
+# M2B: in-memory per-channel state written only by the background probe
+# loops below; API handlers only ever read it (never trigger NVR I/O).
+_channel_store = ChannelStateStore()
+_live_task: Optional[asyncio.Task] = None
+_recording_task: Optional[asyncio.Task] = None
+# Set once each background loop's first round has completed. Tests can wait
+# on these (from a different thread) instead of racing the background task.
+_live_first_round_ready = threading.Event()
+_recording_first_round_ready = threading.Event()
 
 
 @dataclass
@@ -135,10 +148,39 @@ async def _ffmpeg_grab_jpeg(
 
 @app.on_event("startup")
 async def _startup():
-    global _sem
+    global _sem, _live_task, _recording_task
     opts = _load_options()
     max_conc = int(_opt(opts, "max_concurrency", 2))
     _sem = asyncio.Semaphore(max(1, max_conc))
+
+    _live_first_round_ready.clear()
+    _recording_first_round_ready.clear()
+    _live_task = asyncio.create_task(
+        background.live_probe_loop(
+            _channel_store, _load_options, ready_event=_live_first_round_ready
+        )
+    )
+    _recording_task = asyncio.create_task(
+        background.recording_query_loop(
+            _channel_store, _load_options, ready_event=_recording_first_round_ready
+        )
+    )
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    global _live_task, _recording_task
+    for task in (_live_task, _recording_task):
+        if task is not None:
+            task.cancel()
+    for task in (_live_task, _recording_task):
+        if task is not None:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+    _live_task = None
+    _recording_task = None
 
 
 # ---------------------------------------------------------------------------
@@ -239,14 +281,15 @@ def _make_response(
 
 
 # ---------------------------------------------------------------------------
-# M2A: minimal /api/v1 skeleton (API.md "Minimal local API").
+# /api/v1 skeleton (API.md "Minimal local API").
 #
-# NOT done in M2A (deliberately deferred to M2B):
-#   - real NVR RTSP live-video probe (live_video stays null)
-#   - Dahua recording query (recording_query_ok stays false, recording_recent
-#     / last_recording stay null)
-# The snapshot sub-endpoint reuses the same demand-driven capture + cache as
-# the legacy endpoint above; nothing NVR-related is duplicated.
+# M2A only reflected the snapshot cache (live_video/recording fields always
+# null/false). M2B (background.py, live_probe.py, recording_query.py) adds
+# the real NVR RTSP live-video probe and Dahua recording query as background
+# loops; API handlers below only ever read the in-memory results via
+# `_channel_store`, they never call the NVR themselves.
+# The snapshot sub-endpoint still reuses the same demand-driven capture +
+# cache as the legacy endpoint above; nothing NVR-related is duplicated.
 # ---------------------------------------------------------------------------
 
 
@@ -258,23 +301,21 @@ def _is_valid_channel(channel_id: int, opts: dict) -> bool:
     return 1 <= channel_id <= _channel_count(opts)
 
 
-def _iso(ts_ms: int) -> str:
-    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat()
-
-
 def _channel_status(channel_id: int) -> dict:
-    """Build one channel's status from data already known to this process.
-    M2A only reflects the snapshot cache; no new NVR calls are made here."""
+    """Build one channel's status from data already known to this process
+    (in-memory only): the snapshot cache plus the latest background
+    live-video probe / recording query results. No NVR call is made here."""
     cached = _cache.get(str(channel_id))
+    state = _channel_store.snapshot(channel_id)
     return {
         "channel_id": channel_id,
-        "live_video": None,
+        "live_video": state["live_video"],
         "snapshot_available": bool(cached and cached.ok and cached.jpeg),
-        "recording_query_ok": False,
-        "recording_recent": None,
-        "last_recording": None,
-        "checked_at": _iso(cached.ts_ms) if cached else None,
-        "error_code": None,
+        "recording_query_ok": state["recording_query_ok"],
+        "recording_recent": state["recording_recent"],
+        "last_recording": state["last_recording"],
+        "checked_at": state["checked_at"],
+        "error_code": state["error_code"],
     }
 
 

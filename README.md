@@ -147,16 +147,19 @@ Home Assistant
 
 完成後再進 M2B。
 
-### M2B：搬移 NVR live probe 與 recording query（尚未開始）
+### M2B：搬移 NVR live probe 與 recording query（已完成，尚未部署）
 
-- [ ] 把 NVR RTSP live-video probe 搬到 add-on，預設每 5 分鐘執行一次。
-- [ ] 把 Dahua recording query 搬到 add-on，預設每 15 分鐘執行一次。
-- [ ] `/api/v1/channels*` 改為讀取 add-on 保存的最新背景結果，不讓每次 GET 對 14 個 channel 同步執行完整 probe。
-- [ ] Snapshot 維持 demand-driven 與現有 cache 行為（M2A 已共用同一套 cache/capture 路徑，M2B 不重做）。
-- [ ] Add-on 對外 response 不包含 credentials、RTSP URL 或完整 ffmpeg stderr。
-- [ ] 使用少量 fake-based unit tests，不要求真實 NVR。
+- [x] 把 NVR RTSP live-video probe 搬到 add-on（`live_probe.py`，沿用 integration 原本的 DESCRIBE/SETUP/PLAY/RTP 判斷邏輯），預設每 300 秒執行一次。
+- [x] 把 Dahua recording query 搬到 add-on（`recording_query.py`，沿用 integration 原本的 `mediaFileFind.cgi` 查詢與 24 小時判定邏輯，含 Asia/Taipei 本地時間假設），預設每 900 秒執行一次。
+- [x] add-on 啟動後立即執行第一輪，不等待完整 interval。
+- [x] `/api/v1/channels*` 改為只讀取 add-on 保存的最新背景結果（`channel_state.py` 的 in-memory store），不讓每次 GET 對 channel 同步執行探測。
+- [x] 背景探測以 `max_concurrency` option 限制同時數量，單一 channel 失敗或逾時不影響其他 channel、也不中止整批。
+- [x] Snapshot 維持 demand-driven 與現有 cache 行為（M2A 已共用同一套 cache/capture 路徑，M2B 不重做）。
+- [x] Add-on 對外 response 不包含 credentials、RTSP URL、CGI request URL 或完整 ffmpeg/CGI stderr／body。
+- [x] 使用 fake-based unit tests（`test_background_probes.py`），不要求真實 NVR、Docker 或 HAOS。
+- [x] 背景 task 使用 FastAPI `startup`／`shutdown` event 管理；shutdown 會 cancel 並 await，不留孤兒 task。
 
-完成後再進 M3。
+完成後再進 M3。M2B 尚未部署到任何 add-on instance；部署與實機驗證待使用者核准後另行執行。
 
 ### M3：Integration 改用 add-on
 
