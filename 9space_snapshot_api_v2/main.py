@@ -147,9 +147,19 @@ async def _startup():
 # ---------------------------------------------------------------------------
 
 
+class _Busy(Exception):
+    """Raised when the ffmpeg concurrency slot could not be acquired within
+    QUEUE_TIMEOUT_MS. Kept distinct from a normal (cacheable) CacheEntry so
+    the legacy endpoint can still return its original 503 "busy" response
+    instead of the generic 200 JSON used for other capture failures."""
+
+
 async def _capture_snapshot(camera_id: str) -> CacheEntry:
     """Shared demand-driven capture + cache used by both the legacy endpoint
-    and the new /api/v1 snapshot endpoint, so there is only one probe path."""
+    and the new /api/v1 snapshot endpoint, so there is only one probe path.
+
+    Raises _Busy (not cached) when the concurrency slot could not be
+    acquired in time, matching the original add-on's busy behaviour."""
     opts = _load_options()
     timeout_ms = int(_opt(opts, "health_timeout_ms", 2500))
     jpeg_qv = int(_opt(opts, "jpeg_qv", 7))
@@ -167,7 +177,7 @@ async def _capture_snapshot(camera_id: str) -> CacheEntry:
     try:
         await asyncio.wait_for(_sem.acquire(), timeout=QUEUE_TIMEOUT_MS / 1000.0)
     except asyncio.TimeoutError:
-        return CacheEntry(ts_ms=now_ms, ok=False, latency_ms=0, detail="busy", jpeg=None)
+        raise _Busy() from None
 
     try:
         ok, latency_ms, jpeg, detail = await _ffmpeg_grab_jpeg(rtsp_url, timeout_ms, jpeg_qv)
@@ -184,7 +194,16 @@ async def _capture_snapshot(camera_id: str) -> CacheEntry:
 async def camera_status_and_snapshot(
     camera_id: str = Path(..., description="Dahua channel number, e.g. 1"),
 ):
-    entry = await _capture_snapshot(camera_id)
+    try:
+        entry = await _capture_snapshot(camera_id)
+    except _Busy:
+        status = {
+            "camera_id": camera_id,
+            "ok": False,
+            "latency_ms": 0,
+            "detail": "busy",
+        }
+        return JSONResponse(status_code=503, content=status)
     return _make_response(camera_id, entry.ok, entry.latency_ms, entry.detail, entry.jpeg)
 
 
@@ -271,7 +290,7 @@ async def list_channels() -> List[dict]:
 
 
 @app.get("/api/v1/channels/{channel_id}")
-async def get_channel(channel_id: int = Path(..., ge=1)):
+async def get_channel(channel_id: int = Path(...)):
     opts = _load_options()
     if not _is_valid_channel(channel_id, opts):
         return JSONResponse(status_code=404, content={"error_code": "channel_not_found"})
@@ -279,12 +298,15 @@ async def get_channel(channel_id: int = Path(..., ge=1)):
 
 
 @app.get("/api/v1/channels/{channel_id}/snapshot")
-async def channel_snapshot(channel_id: int = Path(..., ge=1)):
+async def channel_snapshot(channel_id: int = Path(...)):
     opts = _load_options()
     if not _is_valid_channel(channel_id, opts):
         return JSONResponse(status_code=404, content={"error_code": "channel_not_found"})
 
-    entry = await _capture_snapshot(str(channel_id))
+    try:
+        entry = await _capture_snapshot(str(channel_id))
+    except _Busy:
+        return JSONResponse(status_code=503, content={"error_code": "snapshot_unavailable"})
     if entry.ok and entry.jpeg:
         return Response(content=entry.jpeg, media_type="image/jpeg")
     return JSONResponse(status_code=503, content={"error_code": "snapshot_unavailable"})

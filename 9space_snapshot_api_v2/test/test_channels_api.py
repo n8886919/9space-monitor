@@ -11,6 +11,7 @@ Run locally with:
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import unittest
 from pathlib import Path
@@ -87,6 +88,16 @@ class AddonApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.json(), {"error_code": "channel_not_found"})
 
+    def test_get_channel_zero_is_not_found(self) -> None:
+        resp = self.client.get("/api/v1/channels/0")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json(), {"error_code": "channel_not_found"})
+
+    def test_get_channel_negative_is_not_found(self) -> None:
+        resp = self.client.get("/api/v1/channels/-1")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json(), {"error_code": "channel_not_found"})
+
     def test_get_channel_valid(self) -> None:
         resp = self.client.get("/api/v1/channels/1")
         self.assertEqual(resp.status_code, 200)
@@ -94,6 +105,16 @@ class AddonApiTests(unittest.TestCase):
 
     def test_snapshot_unknown_channel_404(self) -> None:
         resp = self.client.get("/api/v1/channels/99/snapshot")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json(), {"error_code": "channel_not_found"})
+
+    def test_snapshot_zero_channel_404(self) -> None:
+        resp = self.client.get("/api/v1/channels/0/snapshot")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json(), {"error_code": "channel_not_found"})
+
+    def test_snapshot_negative_channel_404(self) -> None:
+        resp = self.client.get("/api/v1/channels/-1/snapshot")
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.json(), {"error_code": "channel_not_found"})
 
@@ -116,6 +137,15 @@ class AddonApiTests(unittest.TestCase):
 
         with patch.object(main, "_ffmpeg_grab_jpeg", side_effect=fake_grab):
             resp = self.client.get("/api/v1/channels/2/snapshot")
+
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.json(), {"error_code": "snapshot_unavailable"})
+
+    def test_snapshot_returns_503_when_busy(self) -> None:
+        # Fully-held semaphore: any acquire attempt times out immediately.
+        main._sem = asyncio.Semaphore(0)
+        with patch.object(main, "QUEUE_TIMEOUT_MS", 20):
+            resp = self.client.get("/api/v1/channels/1/snapshot")
 
         self.assertEqual(resp.status_code, 503)
         self.assertEqual(resp.json(), {"error_code": "snapshot_unavailable"})
@@ -149,6 +179,21 @@ class AddonApiTests(unittest.TestCase):
         self.assertIn(b"Content-Type: application/json", resp.content)
         self.assertIn(b"Content-Type: image/jpeg", resp.content)
         self.assertIn(fake_jpeg, resp.content)
+
+    def test_legacy_endpoint_returns_503_when_busy(self) -> None:
+        # Fully-held semaphore: any acquire attempt times out immediately,
+        # matching the original add-on's busy behaviour (503, not 200).
+        main._sem = asyncio.Semaphore(0)
+        with patch.object(main, "QUEUE_TIMEOUT_MS", 20):
+            resp = self.client.get("/api/camera/1")
+
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(
+            resp.json(),
+            {"camera_id": "1", "ok": False, "latency_ms": 0, "detail": "busy"},
+        )
+        # Busy responses must not be cached (matches original behaviour).
+        self.assertNotIn("1", main._cache)
 
 
 if __name__ == "__main__":
