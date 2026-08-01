@@ -1,11 +1,12 @@
-"""Static checks for the M2A dev add-on's port configuration.
+"""Static checks for the canonical add-on's port configuration.
 
 These are plain text assertions against config.yaml / run.sh (no PyYAML
 dependency) to lock down the fix for the `http_port` naming mistake:
 
 - `nvr_http_port` (default 80) is the Dahua NVR's own HTTP/CGI port.
-- The add-on itself always listens on container port 8000, mapped to host
-  port 8222. This is NOT configurable via any option.
+- The add-on itself always listens on container port 8000, mapped to the
+  monorepo dev instance's default host port 8222. This is NOT configurable
+  via any option.
 """
 
 from __future__ import annotations

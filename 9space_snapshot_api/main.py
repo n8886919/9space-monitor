@@ -4,7 +4,8 @@ import os
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Path, Response
 from fastapi.responses import JSONResponse
@@ -140,30 +141,62 @@ async def _startup():
     _sem = asyncio.Semaphore(max(1, max_conc))
 
 
-@app.get("/api/camera/{camera_id}")
-async def camera_status_and_snapshot(
-    camera_id: str = Path(..., description="Dahua channel number, e.g. 1"),
-):
+# ---------------------------------------------------------------------------
+# Legacy endpoint. Path, status codes, JSON fields, multipart and JPEG
+# response must stay unchanged. See API.md "Legacy API".
+# ---------------------------------------------------------------------------
+
+
+class _Busy(Exception):
+    """Raised when the ffmpeg concurrency slot could not be acquired within
+    QUEUE_TIMEOUT_MS. Kept distinct from a normal (cacheable) CacheEntry so
+    the legacy endpoint can still return its original 503 "busy" response
+    instead of the generic 200 JSON used for other capture failures."""
+
+
+async def _capture_snapshot(camera_id: str) -> CacheEntry:
+    """Shared demand-driven capture + cache used by both the legacy endpoint
+    and the new /api/v1 snapshot endpoint, so there is only one probe path.
+
+    Raises _Busy (not cached) when the concurrency slot could not be
+    acquired in time, matching the original add-on's busy behaviour."""
     opts = _load_options()
     timeout_ms = int(_opt(opts, "health_timeout_ms", 2500))
     jpeg_qv = int(_opt(opts, "jpeg_qv", 7))
     cache_ms = int(_opt(opts, "snapshot_cache_ms", 800))
 
-    # Cache hit? (RAM only; no files written)
     now_ms = int(time.time() * 1000)
     async with _cache_lock:
         ce = _cache.get(camera_id)
         if ce and (now_ms - ce.ts_ms) <= max(0, cache_ms):
-            return _make_response(camera_id, ce.ok, ce.latency_ms, ce.detail, ce.jpeg)
+            return ce
 
     rtsp_url = _build_rtsp_url(opts, camera_id)
 
     assert _sem is not None
-
-    # Acquire a slot with a hard-coded queue timeout; if too busy, return 503 quickly.
     try:
         await asyncio.wait_for(_sem.acquire(), timeout=QUEUE_TIMEOUT_MS / 1000.0)
     except asyncio.TimeoutError:
+        raise _Busy() from None
+
+    try:
+        ok, latency_ms, jpeg, detail = await _ffmpeg_grab_jpeg(rtsp_url, timeout_ms, jpeg_qv)
+    finally:
+        _sem.release()
+
+    entry = CacheEntry(ts_ms=now_ms, ok=ok, latency_ms=latency_ms, detail=detail, jpeg=jpeg)
+    async with _cache_lock:
+        _cache[camera_id] = entry
+    return entry
+
+
+@app.get("/api/camera/{camera_id}")
+async def camera_status_and_snapshot(
+    camera_id: str = Path(..., description="Dahua channel number, e.g. 1"),
+):
+    try:
+        entry = await _capture_snapshot(camera_id)
+    except _Busy:
         status = {
             "camera_id": camera_id,
             "ok": False,
@@ -171,19 +204,7 @@ async def camera_status_and_snapshot(
             "detail": "busy",
         }
         return JSONResponse(status_code=503, content=status)
-
-    try:
-        ok, latency_ms, jpeg, detail = await _ffmpeg_grab_jpeg(rtsp_url, timeout_ms, jpeg_qv)
-    finally:
-        _sem.release()
-
-    # Update cache (RAM only)
-    async with _cache_lock:
-        _cache[camera_id] = CacheEntry(
-            ts_ms=now_ms, ok=ok, latency_ms=latency_ms, detail=detail, jpeg=jpeg
-        )
-
-    return _make_response(camera_id, ok, latency_ms, detail, jpeg)
+    return _make_response(camera_id, entry.ok, entry.latency_ms, entry.detail, entry.jpeg)
 
 
 def _make_response(
@@ -215,3 +236,77 @@ def _make_response(
     body += f"--{boundary}--\r\n".encode()
 
     return Response(content=body, media_type=f"multipart/mixed; boundary={boundary}")
+
+
+# ---------------------------------------------------------------------------
+# M2A: minimal /api/v1 skeleton (API.md "Minimal local API").
+#
+# NOT done in M2A (deliberately deferred to M2B):
+#   - real NVR RTSP live-video probe (live_video stays null)
+#   - Dahua recording query (recording_query_ok stays false, recording_recent
+#     / last_recording stay null)
+# The snapshot sub-endpoint reuses the same demand-driven capture + cache as
+# the legacy endpoint above; nothing NVR-related is duplicated.
+# ---------------------------------------------------------------------------
+
+
+def _channel_count(opts: dict) -> int:
+    return int(_opt(opts, "channel_count", 14))
+
+
+def _is_valid_channel(channel_id: int, opts: dict) -> bool:
+    return 1 <= channel_id <= _channel_count(opts)
+
+
+def _iso(ts_ms: int) -> str:
+    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat()
+
+
+def _channel_status(channel_id: int) -> dict:
+    """Build one channel's status from data already known to this process.
+    M2A only reflects the snapshot cache; no new NVR calls are made here."""
+    cached = _cache.get(str(channel_id))
+    return {
+        "channel_id": channel_id,
+        "live_video": None,
+        "snapshot_available": bool(cached and cached.ok and cached.jpeg),
+        "recording_query_ok": False,
+        "recording_recent": None,
+        "last_recording": None,
+        "checked_at": _iso(cached.ts_ms) if cached else None,
+        "error_code": None,
+    }
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
+
+
+@app.get("/api/v1/channels")
+async def list_channels() -> List[dict]:
+    opts = _load_options()
+    return [_channel_status(cid) for cid in range(1, _channel_count(opts) + 1)]
+
+
+@app.get("/api/v1/channels/{channel_id}")
+async def get_channel(channel_id: int = Path(...)):
+    opts = _load_options()
+    if not _is_valid_channel(channel_id, opts):
+        return JSONResponse(status_code=404, content={"error_code": "channel_not_found"})
+    return _channel_status(channel_id)
+
+
+@app.get("/api/v1/channels/{channel_id}/snapshot")
+async def channel_snapshot(channel_id: int = Path(...)):
+    opts = _load_options()
+    if not _is_valid_channel(channel_id, opts):
+        return JSONResponse(status_code=404, content={"error_code": "channel_not_found"})
+
+    try:
+        entry = await _capture_snapshot(str(channel_id))
+    except _Busy:
+        return JSONResponse(status_code=503, content={"error_code": "snapshot_unavailable"})
+    if entry.ok and entry.jpeg:
+        return Response(content=entry.jpeg, media_type="image/jpeg")
+    return JSONResponse(status_code=503, content={"error_code": "snapshot_unavailable"})

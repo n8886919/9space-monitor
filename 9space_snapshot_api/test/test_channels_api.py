@@ -1,4 +1,4 @@
-"""Minimal fake-based tests for the M2A add-on API skeleton.
+"""Minimal fake-based tests for the add-on API (legacy + /api/v1 skeleton).
 
 These tests do not require a real NVR. They monkeypatch the ffmpeg capture
 function and the options loader so the FastAPI app can be exercised purely
@@ -6,7 +6,7 @@ with fakes (per README M2A: "使用 fake service/result 寫最少測試").
 
 Run locally with:
     pip install fastapi httpx
-    python -m unittest discover -s 9space_snapshot_api_v2/test -v
+    python -m unittest discover -s 9space_snapshot_api/test -v
 """
 
 from __future__ import annotations

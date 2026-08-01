@@ -1,7 +1,12 @@
 name: 9Space Snapshot Addon
-version: "0.2.1"
+version: "0.3.0"
 slug: 9space_snapshot_addon
-description: Single API returns stream health + snapshot (JPEG) from Dahua NVR RTSP.
+description: >-
+  Monorepo development instance of the 9Space local API. Adds /healthz and
+  /api/v1 channel endpoints alongside the unchanged legacy snapshot endpoint.
+  Default host port is 8222 (the monorepo dev instance); the independent
+  production instance used by colleagues (separate repo, port 8122) is not
+  affected by this repository.
 arch:
   - amd64
   - aarch64
@@ -11,7 +16,7 @@ boot: auto
 init: false
 
 ports:
-  8000/tcp: 8122
+  8000/tcp: 8222
 
 options:
   nvr_host: "192.168.0.100"
@@ -22,6 +27,8 @@ options:
   health_timeout_ms: 10000
   jpeg_qv: 32
   max_concurrency: 2
+  nvr_http_port: 80
+  channel_count: 14
 
 schema:
   nvr_host: str
@@ -32,3 +39,5 @@ schema:
   health_timeout_ms: int
   jpeg_qv: int
   max_concurrency: int
+  nvr_http_port: int
+  channel_count: int

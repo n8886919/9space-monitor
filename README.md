@@ -121,24 +121,25 @@ Home Assistant
 
 ## Current milestone
 
+> **Port／來源說明（2026-08 起）**：`8122` 是同事目前使用的正式 instance，來源是**獨立的舊 repo**（不是這個 monorepo），本專案禁止修改或停止它。`8222` 是**這個 monorepo**（`9space_snapshot_api/`）建置出來的開發 instance，M2 系列開發與測試都只針對 `8222`。兩者的 add-on slug 目前都叫 `9space_snapshot_addon`，但分屬不同 repository，Supervisor 會依 repository 分別加上前綴以區分。本 repository 只保留一份 add-on source（`9space_snapshot_api/`），不再有 `_v2` 資料夾或 `_v2` slug。
+
 ### M1：合併 repository，不改行為（已完成）
 
 - [x] 將 `9space-snapshot-addon/9space_snapshot_api` 複製到本 repository 根目錄。
 - [x] 保留 add-on slug `9space_snapshot_addon`。
-- [x] 保留 container port `8000` 與目前 host port `8122`。
+- [x] 保留 container port `8000`。
 - [x] 保留舊 `GET /api/camera/{camera_id}` response。
 - [x] 確認 add-on 可 build、start，舊 endpoint 可取得 snapshot。
 - [x] 不修改 integration 行為。
 
-### M2A：Add-on API 骨架（monorepo 新 add-on，dev port 8222）
+### M2A：Add-on API 骨架（合併進 canonical `9space_snapshot_api`，開發 port 8222）
 
-開發與測試只使用新的 `9space_snapshot_api_v2`（slug `9space_snapshot_addon_v2`，version `1.0.0`），現有 `9space_snapshot_api`（slug `9space_snapshot_addon`，host port `8122`）維持原樣，不修改、不停止，供同事繼續使用。
+開發與測試只使用這個 monorepo 的 `9space_snapshot_api`（開發 instance，預設 host port `8222`）。同事正在使用的正式 instance（獨立舊 repo，port `8122`）不受本 repository 影響，不修改、不停止。
 
-> `9space_snapshot_api_v2` 只是開發期間為了與 8122 舊版並存的暫時副本，不是最終架構。等 M3 完成、同事切換到新 API 後，只保留一份 add-on source（移除其中一份重複程式碼），不長期維護兩份。
-
-- [x] 新增 `9space_snapshot_api_v2` add-on，內含 `/healthz`、`/api/v1/channels`、`/api/v1/channels/{channel_id}`、`/api/v1/channels/{channel_id}/snapshot`。
-- [x] 新增 options：`nvr_http_port`（Dahua NVR 自己的 HTTP/CGI port，預設 `80`，與 add-on 監聽 port 無關）、`channel_count`（預設 `14`）。add-on 本身固定監聽 container port `8000`（host port `8222`），不可由任何 option 改變。
-- [x] 舊 `GET /api/camera/{camera_id}` 的 path、status code、JSON、multipart 與 JPEG response 完全不變，並在新 add-on 內以相容測試鎖定。
+- [x] `9space_snapshot_api` 新增 `/healthz`、`/api/v1/channels`、`/api/v1/channels/{channel_id}`、`/api/v1/channels/{channel_id}/snapshot`。
+- [x] 新增 options：`nvr_http_port`（Dahua NVR 自己的 HTTP/CGI port，預設 `80`，與 add-on 監聽 port 無關）、`channel_count`（預設 `14`）。add-on 本身固定監聽 container port `8000`（開發 instance 預設 host port `8222`），不可由任何 option 改變。
+- [x] 舊 `GET /api/camera/{camera_id}` 的 path、status code、JSON、multipart 與 JPEG response 完全不變（含 semaphore busy 時的 HTTP 503），並以測試鎖定。
+- [x] `/api/v1/channels/{channel_id}*` 對任何小於 1 或大於 `channel_count` 的 channel（含 0、負數）統一回 HTTP 404 `{"error_code":"channel_not_found"}`。
 - [x] 不搬 NVR RTSP live-video probe（`live_video` 目前固定回 `null`）。
 - [x] 不搬 Dahua recording query（`recording_query_ok`／`recording_recent`／`last_recording` 目前固定回 `false`／`null`）。
 - [x] 不修改 integration。
