@@ -9,8 +9,6 @@
   "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/n8886919/9space-monitor/issues",
-  "requirements": [
-    "icmplib==3.0"
-  ],
-  "version": "0.1.5"
+  "requirements": [],
+  "version": "0.2.0"
 }

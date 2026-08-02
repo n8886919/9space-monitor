@@ -27,17 +27,10 @@ class CameraBinaryDescription(BinarySensorEntityDescription):
     """Describe one camera binary sensor."""
 
     source: str
-    value_fn: Callable[[dict[str, Any]], bool]
+    value_fn: Callable[[dict[str, Any]], bool | None]
 
 
 BINARY_SENSORS = (
-    CameraBinaryDescription(
-        key="network_reachable",
-        translation_key="network_reachable",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        source="network",
-        value_fn=lambda data: bool(data.get("reachable")),
-    ),
     CameraBinaryDescription(
         key="camera_rtsp_alive",
         translation_key="camera_rtsp_alive",
@@ -49,8 +42,8 @@ BINARY_SENSORS = (
         key="nvr_live_video",
         translation_key="nvr_live_video",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        source="service",
-        value_fn=lambda data: bool(data.get("nvr_live_video")),
+        source="addon",
+        value_fn=lambda data: data.get("nvr_live_video"),
     ),
     CameraBinaryDescription(
         key="camera_problem",
@@ -58,8 +51,7 @@ BINARY_SENSORS = (
         device_class=BinarySensorDeviceClass.PROBLEM,
         source="problem",
         value_fn=lambda data: not (
-            data.get("reachable")
-            and data.get("camera_rtsp_alive")
+            data.get("camera_rtsp_alive")
             and data.get("nvr_live_video")
         ),
     ),
@@ -67,15 +59,15 @@ BINARY_SENSORS = (
         key="recording_recent",
         translation_key="recording_recent",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        source="recording",
-        value_fn=lambda data: bool(data.get("recording_recent")),
+        source="addon",
+        value_fn=lambda data: data.get("recording_recent"),
     ),
     CameraBinaryDescription(
         key="recording_query_problem",
         translation_key="recording_query_problem",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
-        source="recording",
+        source="addon",
         value_fn=lambda data: not bool(data.get("recording_query_ok")),
     ),
     CameraBinaryDescription(
@@ -163,34 +155,31 @@ class CameraMonitorBinarySensor(CameraMonitorEntity, BinarySensorEntity):
         coordinator = (
             entry.runtime_data.service
             if description.source == "service"
-            else entry.runtime_data.recording
-            if description.source == "recording"
-            else entry.runtime_data.network
+            else entry.runtime_data.addon
         )
         super().__init__(entry, subentry, camera, coordinator, description)
 
     def _merged_data(self) -> dict[str, Any]:
-        network = (self.entry.runtime_data.network.data or {}).get(
-            self.camera.subentry_id, {}
-        )
         service = (self.entry.runtime_data.service.data or {}).get(
             self.camera.subentry_id, {}
         )
-        recording = (self.entry.runtime_data.recording.data or {}).get(
+        addon = (self.entry.runtime_data.addon.data or {}).get(
             self.camera.subentry_id, {}
         )
-        return {**network, **service, **recording}
+        return {**service, **addon}
 
     @property
     def available(self) -> bool:
-        """Require both fast and slow data before declaring a combined problem."""
+        """Require camera service and add-on data for a combined problem."""
         if self.entity_description.source != "problem":
             return super().available
-        network = self.entry.runtime_data.network.data or {}
         service = self.entry.runtime_data.service.data or {}
+        addon = self.entry.runtime_data.addon.data or {}
         return (
-            self.camera.subentry_id in network
+            self.entry.runtime_data.service.last_update_success
+            and self.entry.runtime_data.addon.last_update_success
             and self.camera.subentry_id in service
+            and self.camera.subentry_id in addon
         )
 
     @property
@@ -208,7 +197,7 @@ class CameraMonitorBinarySensor(CameraMonitorEntity, BinarySensorEntity):
         attributes = dict(super().extra_state_attributes)
         if self.entity_description.source in (
             "service",
-            "recording",
+            "addon",
             "problem",
         ):
             data = self._merged_data()
@@ -216,18 +205,10 @@ class CameraMonitorBinarySensor(CameraMonitorEntity, BinarySensorEntity):
                 {
                     "camera_rtsp_status": data.get("camera_rtsp_status"),
                     "camera_rtsp_error": data.get("camera_rtsp_error", ""),
-                    "nvr_describe_status": data.get("nvr_describe_status"),
-                    "nvr_setup_status": data.get("nvr_setup_status"),
-                    "nvr_play_status": data.get("nvr_play_status"),
                     "nvr_error": data.get("nvr_error", ""),
-                    "rtp_packets": data.get("nvr_rtp_packets"),
-                    "rtp_timestamps": data.get("nvr_rtp_timestamps"),
                     "checked_at": data.get("checked_at"),
                     "recording_error": data.get("recording_error", ""),
                     "last_recording": data.get("last_recording"),
-                    "last_recording_age_hours": data.get(
-                        "last_recording_age_hours"
-                    ),
                 }
             )
         return attributes

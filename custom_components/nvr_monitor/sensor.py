@@ -11,14 +11,9 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
     SensorDeviceClass,
-    SensorStateClass,
 )
 from homeassistant.config_entries import ConfigSubentry
-from homeassistant.const import (
-    PERCENTAGE,
-    EntityCategory,
-    UnitOfTime,
-)
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
@@ -37,121 +32,18 @@ class CameraSensorDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any]], StateType]
 
 
-NETWORK_SENSORS = (
-    CameraSensorDescription(
-        key="online_rate_24h",
-        translation_key="online_rate_24h",
-        source="network",
-        native_unit_of_measurement=PERCENTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda data: data.get("online_rate_24h"),
-    ),
-    CameraSensorDescription(
-        key="offline_count_24h",
-        translation_key="offline_count_24h",
-        source="network",
-        native_unit_of_measurement="times",
-        value_fn=lambda data: data.get("offline_count_24h"),
-    ),
-    CameraSensorDescription(
-        key="rtt_average_1h",
-        translation_key="rtt_average_1h",
-        source="network",
-        native_unit_of_measurement="ms",
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda data: data.get("rtt_avg_1h_ms"),
-    ),
-    CameraSensorDescription(
-        key="packet_loss_average_1h",
-        translation_key="packet_loss_average_1h",
-        source="network",
-        native_unit_of_measurement=PERCENTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda data: data.get("packet_loss_avg_1h_pct"),
-    ),
-    CameraSensorDescription(
-        key="rtt_average_24h",
-        translation_key="rtt_average_24h",
-        source="network",
-        native_unit_of_measurement="ms",
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda data: data.get("rtt_avg_24h_ms"),
-    ),
-    CameraSensorDescription(
-        key="jitter_average_24h",
-        translation_key="jitter_average_24h",
-        source="network",
-        native_unit_of_measurement="ms",
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda data: data.get("jitter_avg_24h_ms"),
-    ),
-    CameraSensorDescription(
-        key="packet_loss_average_24h",
-        translation_key="packet_loss_average_24h",
-        source="network",
-        native_unit_of_measurement=PERCENTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda data: data.get("packet_loss_avg_24h_pct"),
-    ),
-    CameraSensorDescription(
-        key="history_observed",
-        translation_key="history_observed",
-        source="network",
-        native_unit_of_measurement=UnitOfTime.HOURS,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda data: data.get("observed_hours"),
-    ),
-)
-
 SERVICE_SENSORS = (
-    CameraSensorDescription(
-        key="daily_online_rate",
-        translation_key="daily_online_rate",
-        source="service",
-        native_unit_of_measurement=PERCENTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda data: data.get("live_online_rate_24h"),
-    ),
-    CameraSensorDescription(
-        key="nvr_live_video_disconnect_count_24h",
-        translation_key="nvr_live_video_disconnect_count_24h",
-        source="service",
-        native_unit_of_measurement="times",
-        value_fn=lambda data: data.get(
-            "nvr_live_video_disconnect_count_24h"
-        ),
-    ),
     CameraSensorDescription(
         key="diagnostic_status",
         translation_key="diagnostic_status",
         source="merged",
         value_fn=lambda data: (
-            "offline"
-            if not data.get("reachable")
-            else "camera_rtsp_problem"
+            "camera_rtsp_problem"
             if not data.get("camera_rtsp_alive")
             else "nvr_no_video"
             if not data.get("nvr_live_video")
             else "ok"
         ),
-    ),
-    CameraSensorDescription(
-        key="nvr_first_packet",
-        translation_key="nvr_first_packet",
-        source="service",
-        native_unit_of_measurement="ms",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-        value_fn=lambda data: data.get("nvr_first_packet_ms"),
-    ),
-    CameraSensorDescription(
-        key="nvr_probe_duration",
-        translation_key="nvr_probe_duration",
-        source="service",
-        native_unit_of_measurement="ms",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-        value_fn=lambda data: data.get("nvr_probe_ms"),
     ),
     CameraSensorDescription(
         key="camera_rtsp_response",
@@ -164,33 +56,11 @@ SERVICE_SENSORS = (
     ),
 )
 
-RECORDING_SENSORS = (
-    CameraSensorDescription(
-        key="recording_count_24h",
-        translation_key="recording_count_24h",
-        source="recording",
-        native_unit_of_measurement="files",
-        value_fn=lambda data: data.get("recording_count_24h"),
-    ),
-    CameraSensorDescription(
-        key="recording_coverage_24h",
-        translation_key="recording_coverage_24h",
-        source="recording",
-        native_unit_of_measurement=PERCENTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda data: data.get("recording_coverage_24h_pct"),
-    ),
-    CameraSensorDescription(
-        key="recording_gap_count_24h",
-        translation_key="recording_gap_count_24h",
-        source="recording",
-        native_unit_of_measurement="gaps",
-        value_fn=lambda data: data.get("recording_gap_count_24h"),
-    ),
+ADDON_SENSORS = (
     CameraSensorDescription(
         key="last_recording",
         translation_key="last_recording",
-        source="recording",
+        source="addon",
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda data: (
             datetime.fromisoformat(data["last_recording"])
@@ -198,16 +68,9 @@ RECORDING_SENSORS = (
             else None
         ),
     ),
-    CameraSensorDescription(
-        key="last_recording_age",
-        translation_key="last_recording_age",
-        source="recording",
-        native_unit_of_measurement=UnitOfTime.HOURS,
-        value_fn=lambda data: data.get("last_recording_age_hours"),
-    ),
 )
 
-SENSORS = NETWORK_SENSORS + SERVICE_SENSORS + RECORDING_SENSORS
+SENSORS = SERVICE_SENSORS + ADDON_SENSORS
 
 EVENT_SENSORS = (
     SensorEntityDescription(
@@ -266,10 +129,8 @@ class CameraMonitorSensor(CameraMonitorEntity, SensorEntity):
         description: CameraSensorDescription,
     ) -> None:
         coordinator = (
-            entry.runtime_data.network
-            if description.source == "network"
-            else entry.runtime_data.recording
-            if description.source == "recording"
+            entry.runtime_data.addon
+            if description.source == "addon"
             else entry.runtime_data.service
         )
         super().__init__(entry, subentry, camera, coordinator, description)
@@ -278,39 +139,43 @@ class CameraMonitorSensor(CameraMonitorEntity, SensorEntity):
     def native_value(self) -> StateType:
         """Return the sensor value."""
         if self.entity_description.source == "merged":
-            network = (self.entry.runtime_data.network.data or {}).get(
-                self.camera.subentry_id, {}
-            )
             service = (self.entry.runtime_data.service.data or {}).get(
                 self.camera.subentry_id, {}
             )
-            data = {**network, **service}
+            addon = (self.entry.runtime_data.addon.data or {}).get(
+                self.camera.subentry_id, {}
+            )
+            data = {**service, **addon}
         else:
             data = self.coordinator.data[self.camera.subentry_id]
         return self.entity_description.value_fn(data)
 
     @property
+    def available(self) -> bool:
+        """Require both coordinators for the merged diagnostic state."""
+        if self.entity_description.source != "merged":
+            return super().available
+        service = self.entry.runtime_data.service
+        addon = self.entry.runtime_data.addon
+        return (
+            service.last_update_success
+            and addon.last_update_success
+            and service.data is not None
+            and addon.data is not None
+            and self.camera.subentry_id in service.data
+            and self.camera.subentry_id in addon.data
+        )
+
+    @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return mapping and history confidence."""
         attributes = dict(super().extra_state_attributes)
-        if self.entity_description.source == "network":
-            data = self.coordinator.data[self.camera.subentry_id]
-            attributes.update(
-                {
-                    "history_samples": data.get("history_samples"),
-                    "observed_hours": data.get("observed_hours"),
-                    "current_rtt_ms": data.get("rtt_avg_ms"),
-                    "current_jitter_ms": data.get("jitter_ms"),
-                    "current_packet_loss_pct": data.get("packet_loss_pct"),
-                }
-            )
-        elif self.entity_description.source == "recording":
+        if self.entity_description.source == "addon":
             data = self.coordinator.data[self.camera.subentry_id]
             attributes.update(
                 {
                     "query_ok": data.get("recording_query_ok"),
                     "error": data.get("recording_error", ""),
-                    "truncated": data.get("recording_truncated"),
                     "checked_at": data.get("checked_at"),
                 }
             )

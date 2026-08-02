@@ -9,7 +9,14 @@ from homeassistant.core import HomeAssistant
 
 from . import NvrMonitorConfigEntry
 
-TO_REDACT = {"camera_ip", "ip", "nvr_host", "password", "username"}
+TO_REDACT = {
+    "addon_base_url",
+    "camera_ip",
+    "ip",
+    "nvr_host",
+    "password",
+    "username",
+}
 
 
 async def async_get_config_entry_diagnostics(
@@ -25,20 +32,9 @@ async def async_get_config_entry_diagnostics(
             }
             for subentry_id, subentry in entry.subentries.items()
         },
-        "network": async_redact_data(
-            entry.runtime_data.network.data, TO_REDACT
-        ),
-        "network_history_24h": async_redact_data(
-            entry.runtime_data.network.diagnostic_history(), TO_REDACT
-        ),
+        "addon": async_redact_data(entry.runtime_data.addon.data, TO_REDACT),
         "services": async_redact_data(
             entry.runtime_data.service.data, TO_REDACT
-        ),
-        "service_history_24h": async_redact_data(
-            entry.runtime_data.service.diagnostic_history(), TO_REDACT
-        ),
-        "recordings": async_redact_data(
-            entry.runtime_data.recording.data, TO_REDACT
         ),
         "dahua_events": async_redact_data(
             entry.runtime_data.events.events, TO_REDACT

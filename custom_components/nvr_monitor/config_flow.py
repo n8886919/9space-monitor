@@ -15,8 +15,8 @@ from homeassistant.config_entries import (
     ConfigSubentryFlow,
     SubentryFlowResult,
 )
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
@@ -26,8 +26,14 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .api import CameraProbeClient, NvrConfig
+from .addon_api import (
+    AddonApiClient,
+    AddonCannotConnect,
+    AddonInvalidResponse,
+    normalize_base_url,
+)
 from .const import (
+    CONF_ADDON_BASE_URL,
     CONF_CAMERA_IP,
     CONF_CAMERA_NAME,
     CONF_CAMERA_ONVIF_PORT,
@@ -36,13 +42,8 @@ from .const import (
     CONF_GROUP,
     CONF_MODEL,
     CONF_NVR_CHANNEL,
-    CONF_NVR_HOST,
-    CONF_NVR_HTTP_PORT,
-    CONF_NVR_RTSP_PORT,
     DEFAULT_CAMERA_ONVIF_PORT,
     DEFAULT_CAMERA_RTSP_PORT,
-    DEFAULT_NVR_RTSP_PORT,
-    DEFAULT_NVR_HTTP_PORT,
     DOMAIN,
     SUBENTRY_TYPE_CAMERA,
 )
@@ -61,26 +62,11 @@ def _port_selector(default: int) -> NumberSelector:
     )
 
 
-NVR_SCHEMA = vol.Schema(
+ADDON_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_NVR_HOST): TextSelector(
-            TextSelectorConfig(type=TextSelectorType.TEXT)
-        ),
-        vol.Required(
-            CONF_NVR_RTSP_PORT, default=DEFAULT_NVR_RTSP_PORT
-        ): _port_selector(DEFAULT_NVR_RTSP_PORT),
-        vol.Required(
-            CONF_NVR_HTTP_PORT, default=DEFAULT_NVR_HTTP_PORT
-        ): _port_selector(DEFAULT_NVR_HTTP_PORT),
-        vol.Required(CONF_USERNAME): TextSelector(
+        vol.Required(CONF_ADDON_BASE_URL): TextSelector(
             TextSelectorConfig(
-                type=TextSelectorType.TEXT, autocomplete="username"
-            )
-        ),
-        vol.Required(CONF_PASSWORD): TextSelector(
-            TextSelectorConfig(
-                type=TextSelectorType.PASSWORD,
-                autocomplete="current-password",
+                type=TextSelectorType.URL,
             )
         ),
     }
@@ -110,32 +96,26 @@ CAMERA_SCHEMA = vol.Schema(
 )
 
 
-def _validate_nvr(user_input: dict[str, Any]) -> None:
-    CameraProbeClient(
-        NvrConfig(
-            host=str(user_input[CONF_NVR_HOST]).strip(),
-            http_port=int(user_input[CONF_NVR_HTTP_PORT]),
-            port=int(user_input[CONF_NVR_RTSP_PORT]),
-            username=str(user_input[CONF_USERNAME]),
-            password=str(user_input[CONF_PASSWORD]),
-        )
-    ).validate_nvr()
-
-
 class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the integration config flow."""
 
     VERSION = 1
 
-    def _host_is_configured(
-        self, host: str, *, ignored_entry_id: str | None = None
+    def _base_url_is_configured(
+        self, base_url: str, *, ignored_entry_id: str | None = None
     ) -> bool:
-        """Return whether another entry already uses the NVR host."""
+        """Return whether another entry already uses the normalized URL."""
         return any(
             entry.entry_id != ignored_entry_id
-            and str(entry.data.get(CONF_NVR_HOST, "")).strip() == host
+            and entry.data.get(CONF_ADDON_BASE_URL) == base_url
             for entry in self._async_current_entries()
         )
+
+    async def _async_validate_addon(self, base_url: str) -> None:
+        """Validate process health and the channel response contract."""
+        client = AddonApiClient(base_url, async_get_clientsession(self.hass))
+        await client.async_get_health()
+        await client.async_get_channels()
 
     @classmethod
     @callback
@@ -148,35 +128,37 @@ class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Configure the NVR."""
+        """Configure the local add-on API."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            host = str(user_input[CONF_NVR_HOST]).strip()
-            if self._host_is_configured(host):
-                return self.async_abort(reason="already_configured")
+            try:
+                base_url = normalize_base_url(
+                    str(user_input[CONF_ADDON_BASE_URL])
+                )
+            except ValueError:
+                errors["base"] = "invalid_response"
             else:
+                if self._base_url_is_configured(base_url):
+                    return self.async_abort(reason="already_configured")
                 try:
-                    await self.hass.async_add_executor_job(
-                        _validate_nvr, user_input
-                    )
-                except PermissionError:
-                    errors["base"] = "invalid_auth"
-                except (OSError, TimeoutError):
+                    await self._async_validate_addon(base_url)
+                except AddonCannotConnect:
                     errors["base"] = "cannot_connect"
+                except AddonInvalidResponse:
+                    errors["base"] = "invalid_response"
                 except Exception:
-                    _LOGGER.exception("Unexpected NVR validation error")
+                    _LOGGER.error("Unexpected add-on validation error")
                     errors["base"] = "unknown"
                 else:
-                    data = dict(user_input)
-                    data[CONF_NVR_HOST] = host
                     return self.async_create_entry(
-                        title=f"NVR Monitor ({host})", data=data
+                        title="NVR Monitor add-on",
+                        data={CONF_ADDON_BASE_URL: base_url},
                     )
 
         return self.async_show_form(
             step_id="user",
             data_schema=self.add_suggested_values_to_schema(
-                NVR_SCHEMA, user_input
+                ADDON_SCHEMA, user_input
             ),
             errors=errors,
         )
@@ -184,40 +166,42 @@ class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Reconfigure the NVR."""
+        """Reconfigure the local add-on API."""
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
         if user_input is not None:
-            host = str(user_input[CONF_NVR_HOST]).strip()
-            if self._host_is_configured(
-                host, ignored_entry_id=entry.entry_id
-            ):
-                errors["base"] = "already_configured"
+            try:
+                base_url = normalize_base_url(
+                    str(user_input[CONF_ADDON_BASE_URL])
+                )
+            except ValueError:
+                errors["base"] = "invalid_response"
             else:
-                try:
-                    await self.hass.async_add_executor_job(
-                        _validate_nvr, user_input
-                    )
-                except PermissionError:
-                    errors["base"] = "invalid_auth"
-                except (OSError, TimeoutError):
-                    errors["base"] = "cannot_connect"
-                except Exception:
-                    _LOGGER.exception("Unexpected NVR validation error")
-                    errors["base"] = "unknown"
+                if self._base_url_is_configured(
+                    base_url, ignored_entry_id=entry.entry_id
+                ):
+                    errors["base"] = "already_configured"
                 else:
-                    data = dict(user_input)
-                    data[CONF_NVR_HOST] = host
-                    return self.async_update_reload_and_abort(
-                        entry,
-                        title=f"NVR Monitor ({host})",
-                        data=data,
-                    )
+                    try:
+                        await self._async_validate_addon(base_url)
+                    except AddonCannotConnect:
+                        errors["base"] = "cannot_connect"
+                    except AddonInvalidResponse:
+                        errors["base"] = "invalid_response"
+                    except Exception:
+                        _LOGGER.error("Unexpected add-on validation error")
+                        errors["base"] = "unknown"
+                    else:
+                        return self.async_update_reload_and_abort(
+                            entry,
+                            title="NVR Monitor add-on",
+                            data={CONF_ADDON_BASE_URL: base_url},
+                        )
 
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=self.add_suggested_values_to_schema(
-                NVR_SCHEMA, user_input or dict(entry.data)
+                ADDON_SCHEMA, user_input or dict(entry.data)
             ),
             errors=errors,
         )

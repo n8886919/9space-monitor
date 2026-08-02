@@ -6,26 +6,15 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 
-from .api import CameraProbeClient, NvrConfig
-from .const import (
-    CONF_NVR_HOST,
-    CONF_NVR_HTTP_PORT,
-    CONF_NVR_RTSP_PORT,
-    DEFAULT_NVR_HTTP_PORT,
-    DEFAULT_NVR_RTSP_PORT,
-    DOMAIN,
-    PLATFORMS,
-)
-from .coordinator import (
-    CameraNetworkCoordinator,
-    CameraRecordingCoordinator,
-    CameraServiceCoordinator,
-)
+from .addon_api import AddonApiClient
+from .api import CameraProbeClient
+from .const import CONF_ADDON_BASE_URL, DOMAIN, PLATFORMS
+from .coordinator import AddonCoordinator, CameraServiceCoordinator
 from .events import CameraEventTracker
 from .models import cameras_from_entry
 
@@ -34,9 +23,8 @@ from .models import cameras_from_entry
 class NvrMonitorRuntimeData:
     """Runtime data shared by entity platforms."""
 
-    network: CameraNetworkCoordinator
+    addon: AddonCoordinator
     service: CameraServiceCoordinator
-    recording: CameraRecordingCoordinator
     events: CameraEventTracker
 
 
@@ -46,31 +34,21 @@ NvrMonitorConfigEntry: TypeAlias = ConfigEntry[NvrMonitorRuntimeData]
 async def async_setup_entry(
     hass: HomeAssistant, entry: NvrMonitorConfigEntry
 ) -> bool:
-    """Set up NVR Monitor from a config entry."""
-    nvr = NvrConfig(
-        host=str(entry.data[CONF_NVR_HOST]),
-        http_port=int(
-            entry.data.get(CONF_NVR_HTTP_PORT, DEFAULT_NVR_HTTP_PORT)
-        ),
-        port=int(entry.data.get(CONF_NVR_RTSP_PORT, DEFAULT_NVR_RTSP_PORT)),
-        username=str(entry.data[CONF_USERNAME]),
-        password=str(entry.data[CONF_PASSWORD]),
-    )
-    client = CameraProbeClient(nvr)
-    cameras = cameras_from_entry(entry)
+    """Set up NVR Monitor without blocking on add-on availability."""
+    base_url = entry.data.get(CONF_ADDON_BASE_URL)
+    if not isinstance(base_url, str) or not base_url:
+        # M3 deliberately has no credential migration or direct-NVR fallback.
+        return False
 
-    network = CameraNetworkCoordinator(hass, entry, cameras)
-    service = CameraServiceCoordinator(hass, entry, client, cameras)
-    recording = CameraRecordingCoordinator(hass, entry, nvr, cameras)
+    cameras = cameras_from_entry(entry)
+    addon_client = AddonApiClient(base_url, async_get_clientsession(hass))
+    addon = AddonCoordinator(hass, entry, addon_client, cameras)
+    service = CameraServiceCoordinator(hass, entry, CameraProbeClient(), cameras)
     events = CameraEventTracker(hass, entry, cameras)
-    await network.async_load_history()
-    await service.async_load_history()
     await events.async_setup()
-    await network.async_config_entry_first_refresh()
     entry.runtime_data = NvrMonitorRuntimeData(
-        network=network,
+        addon=addon,
         service=service,
-        recording=recording,
         events=events,
     )
 
@@ -85,10 +63,10 @@ async def async_setup_entry(
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_create_background_task(
-        hass, service.async_refresh(), "Initial camera service probe"
+        hass, addon.async_refresh(), "Initial add-on channel refresh"
     )
     entry.async_create_background_task(
-        hass, recording.async_refresh(), "Initial recording query"
+        hass, service.async_refresh(), "Initial camera service probe"
     )
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
@@ -97,7 +75,7 @@ async def async_setup_entry(
 async def _async_update_listener(
     hass: HomeAssistant, entry: NvrMonitorConfigEntry
 ) -> None:
-    """Reload when the NVR or camera subentries change."""
+    """Reload when the add-on URL or camera subentries change."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -105,8 +83,6 @@ async def async_unload_entry(
     hass: HomeAssistant, entry: NvrMonitorConfigEntry
 ) -> bool:
     """Unload a config entry."""
-    await entry.runtime_data.network.async_save_history()
-    await entry.runtime_data.service.async_save_history()
     await entry.runtime_data.events.async_save()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
@@ -115,9 +91,6 @@ async def async_remove_entry(
     hass: HomeAssistant, entry: NvrMonitorConfigEntry
 ) -> None:
     """Remove retained data after a config entry is deleted."""
+    # Keep cleanup for histories created by pre-M3 versions.
     for suffix in ("network_history", "service_history", "dahua_events"):
-        await Store(
-            hass,
-            1,
-            f"{DOMAIN}.{entry.entry_id}.{suffix}",
-        ).async_remove()
+        await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.{suffix}").async_remove()

@@ -9,7 +9,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import NvrMonitorConfigEntry
 from .const import DOMAIN
-from .coordinator import CameraNetworkCoordinator, CameraServiceCoordinator
+from .coordinator import AddonCoordinator, CameraServiceCoordinator
 from .models import CameraConfig
 
 
@@ -27,7 +27,7 @@ def camera_device_info(
 
 
 class CameraMonitorEntity(
-    CoordinatorEntity[CameraNetworkCoordinator | CameraServiceCoordinator]
+    CoordinatorEntity[AddonCoordinator | CameraServiceCoordinator]
 ):
     """Base entity for one camera subentry."""
 
@@ -38,7 +38,7 @@ class CameraMonitorEntity(
         entry: NvrMonitorConfigEntry,
         subentry: ConfigSubentry,
         camera: CameraConfig,
-        coordinator: CameraNetworkCoordinator | CameraServiceCoordinator,
+        coordinator: AddonCoordinator | CameraServiceCoordinator,
         description: EntityDescription,
     ) -> None:
         super().__init__(coordinator)
