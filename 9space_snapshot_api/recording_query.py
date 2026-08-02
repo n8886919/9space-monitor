@@ -46,6 +46,14 @@ MAX_FILES = 2000
 RECENT_WINDOW_HOURS = 24
 MAX_CGI_RESPONSE_BYTES = 1 * 1024 * 1024
 FIND_NEXT_FILE_COUNT = 100
+# Fail-closed cap on how many response reads are permitted when urllib's
+# underlying socket cannot be located/shortened (see ``_set_response_timeout``
+# below): without that ability a slow, malicious peer could otherwise trickle
+# a handful of bytes per read for an unbounded number of reads, each bounded
+# individually but with no bound on their total count/duration. One read is
+# still allowed (a normal, fully-buffered CGI response completes in a single
+# read plus one empty EOF read; the EOF read is instant, not blocking).
+MAX_UNBOUNDED_RESPONSE_READS = 1
 
 
 @dataclass(frozen=True)
@@ -114,6 +122,37 @@ def _classify_error(exc: BaseException, stage: str) -> str:
     return "recording_query_failed"
 
 
+class _DeadlineDigestAuthHandler(HTTPDigestAuthHandler):
+    """``HTTPDigestAuthHandler`` that re-checks and re-shortens the retry
+    timeout against the *current* operation deadline before urllib actually
+    issues the Digest-authenticated retry request.
+
+    CPython's stock handler resends the request with ``timeout=req.timeout``
+    -- the *original* timeout computed before the first (401) attempt was
+    even sent. That original value does not account for time already spent
+    on the first round-trip, so a naive retry could push the whole
+    operation well past ``RECORDING_OPERATION_TIMEOUT``. Overriding
+    ``http_error_401`` here lets us recompute ``remaining`` against the real
+    deadline, mutate ``req.timeout`` accordingly, and refuse to retry at all
+    once the deadline is exhausted -- while still going through urllib's own
+    Digest challenge/response handling (no protocol reimplementation, no
+    fallback to Basic-only auth).
+    """
+
+    def __init__(self, password_mgr, client: "DahuaRecordingClient") -> None:
+        super().__init__(password_mgr)
+        self._client = client
+
+    def http_error_401(self, req, fp, code, msg, headers):
+        deadline = self._client._active_deadline
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            fp.close()
+            raise TimeoutError("recording_operation_deadline_exceeded")
+        req.timeout = min(HTTP_TIMEOUT, remaining)
+        return super().http_error_401(req, fp, code, msg, headers)
+
+
 class DahuaRecordingClient:
     """Perform one bounded, authenticated Dahua media-file search."""
 
@@ -122,7 +161,11 @@ class DahuaRecordingClient:
         self.base_url = f"http://{nvr.host}:{nvr.http_port}"
         password_manager = HTTPPasswordMgrWithDefaultRealm()
         password_manager.add_password(None, self.base_url, nvr.username, nvr.password)
-        self.opener = build_opener(HTTPDigestAuthHandler(password_manager))
+        self.opener = build_opener(_DeadlineDigestAuthHandler(password_manager, self))
+        # Set fresh by ``_get`` before every request so the Digest handler's
+        # ``http_error_401`` retry hook above always checks the *current*
+        # operation deadline, not a value captured once at client creation.
+        self._active_deadline = 0.0
 
     @staticmethod
     def _remaining_timeout(deadline: float) -> float:
@@ -132,25 +175,30 @@ class DahuaRecordingClient:
         return min(HTTP_TIMEOUT, remaining)
 
     @staticmethod
-    def _set_response_timeout(response, timeout: float) -> None:
+    def _set_response_timeout(response, timeout: float) -> bool:
         """Shorten urllib's underlying socket timeout when available.
 
         ``HTTPResponse.read1`` is used below so a slow trickle returns control
         after each socket read. The attribute path is deliberately optional
         because fake responses and alternate urllib handlers need not expose
-        the CPython HTTPResponse internals.
+        the CPython HTTPResponse internals. Returns whether the timeout was
+        actually shortened, so callers can fail closed instead of silently
+        trusting an unbounded read when it was not.
         """
         fp = getattr(response, "fp", None)
         raw = getattr(fp, "raw", None)
         response_socket = getattr(raw, "_sock", None)
-        if response_socket is not None:
-            response_socket.settimeout(timeout)
+        if response_socket is None:
+            return False
+        response_socket.settimeout(timeout)
+        return True
 
     def _get(
         self, path: str, params: list[tuple[str, str]], deadline: float
     ) -> str:
         query = urlencode(params, quote_via=quote)
         timeout = self._remaining_timeout(deadline)
+        self._active_deadline = deadline
         with self.opener.open(
             f"{self.base_url}{path}?{query}", timeout=timeout
         ) as response:
@@ -161,9 +209,17 @@ class DahuaRecordingClient:
             # timeout indefinitely.
             read_chunk = getattr(response, "read1", response.read)
             data = bytearray()
+            unbounded_reads = 0
             while len(data) <= MAX_CGI_RESPONSE_BYTES:
                 timeout = self._remaining_timeout(deadline)
-                self._set_response_timeout(response, timeout)
+                if not self._set_response_timeout(response, timeout):
+                    unbounded_reads += 1
+                    if unbounded_reads > MAX_UNBOUNDED_RESPONSE_READS:
+                        # Fail closed: cannot prove this read is bounded by
+                        # ``timeout``, and it has already happened more than
+                        # once for this response -- do not keep trusting an
+                        # unmeasurable, potentially slow-trickling peer.
+                        raise TimeoutError("recording_operation_deadline_exceeded")
                 chunk = read_chunk(
                     min(64 * 1024, MAX_CGI_RESPONSE_BYTES + 1 - len(data))
                 )

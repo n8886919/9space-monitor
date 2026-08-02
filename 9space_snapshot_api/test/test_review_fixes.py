@@ -1,4 +1,4 @@
-"""Fake-based regression tests for the M2B code-review fixes:
+"""Fake/local-server-based regression tests for the M2B code-review fixes:
 
 1. Legacy ffmpeg `detail` redaction (no raw stderr / credentials / RTSP URL).
 2. RTP "wait a bit longer after the first packet" deadline extension.
@@ -7,6 +7,17 @@
 5. `mediaFileFind.cgi` destroy-failure logging (redacted, best-effort).
 6. Shutdown stops scheduling further channels/rounds while a worker is
    blocked in a background thread.
+
+Bounded M2B fix findings (this round):
+
+7. Recording-query Digest auth retry shares and re-checks the same 30s
+   operation deadline (drives a real local HTTP server through the real
+   ``urllib.request.HTTPDigestAuthHandler`` control flow).
+8. RTCP Sender/Receiver Report packets on the video interleaved channel are
+   not misclassified as RTP video and do not extend the RTP deadline.
+9. Common network `OSError`s (DNS failure, connection refused, unreachable
+   network) are mapped to `nvr_unreachable` by exception type, not by
+   OS/locale-dependent message text.
 
 None of these require a real NVR, Docker or HAOS.
 
@@ -17,11 +28,13 @@ Run locally with:
 
 from __future__ import annotations
 
+import http.server
 import socket
 import sys
 import threading
 import time
 import unittest
+from itertools import chain, repeat
 from pathlib import Path
 from urllib.error import URLError
 from unittest.mock import patch
@@ -257,15 +270,44 @@ class RtspResponseLimitTests(unittest.TestCase):
         # A peer that only ever sends 1 byte at a time can never complete
         # the header within an overall per-exchange deadline, even though
         # each individual recv() "succeeds" instantly.
+        #
+        # This must be proven with a deadline that is still in the future
+        # when the call starts (an already-expired deadline would make
+        # recv() never run at all, proving nothing about real trickle
+        # behaviour). A fake monotonic clock advances a little after every
+        # trickle so the test deterministically -- without any real sleep
+        # -- eventually crosses that same deadline and raises.
+        clock = [0.0]
+        deadline = 2.0  # still in the future relative to the starting clock
+
         class _TrickleSocket:
-            def settimeout(self_inner, _value: float) -> None:
-                pass
+            def __init__(self_inner) -> None:
+                self_inner.recv_calls = 0
+                self_inner.timeout_checks: list[tuple[float, float]] = []
+
+            def settimeout(self_inner, value: float) -> None:
+                remaining = deadline - clock[0]
+                self_inner.timeout_checks.append((value, remaining))
 
             def recv(self_inner, _n: int) -> bytes:
+                self_inner.recv_calls += 1
+                clock[0] += 0.5
                 return b"X"
 
-        with self.assertRaises(TimeoutError):
-            live_probe._read_rtsp_response(_TrickleSocket(), deadline=time.monotonic() - 0.001)
+        sock = _TrickleSocket()
+        with patch.object(live_probe.time, "monotonic", side_effect=lambda: clock[0]):
+            with self.assertRaises(TimeoutError):
+                live_probe._read_rtsp_response(sock, deadline=deadline)
+
+        self.assertGreater(sock.recv_calls, 0)
+        self.assertTrue(sock.timeout_checks)
+        self.assertTrue(
+            all(timeout <= remaining for timeout, remaining in sock.timeout_checks)
+        )
+        # The clock only advances in increments of 0.5s starting from 0.0,
+        # so it must have actually crossed the 2.0s deadline (not simply
+        # started past it) for the TimeoutError to be raised.
+        self.assertGreaterEqual(clock[0], deadline)
 
     def test_recv_timeout_never_exceeds_remaining_deadline(self) -> None:
         sock = _StaticSocket(b"RTSP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
@@ -381,9 +423,30 @@ class RtspOperationDeadlineTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class _FakeSocket:
+    """Minimal stand-in for the real socket ``_set_response_timeout`` looks
+    up through ``response.fp.raw._sock`` -- present here so these fakes
+    exercise the normal, timeout-adjustable read path rather than the
+    fail-closed "no adjustable socket" path exercised separately below."""
+
+    def settimeout(self, _value: float) -> None:
+        pass
+
+
+class _FakeRaw:
+    def __init__(self) -> None:
+        self._sock = _FakeSocket()
+
+
+class _FakeFp:
+    def __init__(self) -> None:
+        self.raw = _FakeRaw()
+
+
 class _FakeCgiResponse:
     def __init__(self, data: bytes):
         self._data = data
+        self.fp = _FakeFp()
 
     def read(self, n: int = -1) -> bytes:
         if n is None or n < 0:
@@ -615,6 +678,367 @@ class DestroyFailureTests(unittest.TestCase):
         combined = "\n".join(log_capture.output)
         self.assertNotIn("abc123secretobjectid", combined)
         self.assertNotIn("ERROR unexpected body", combined)
+
+
+# ---------------------------------------------------------------------------
+# Bounded M2B fix, Finding 2: Digest retry must share/re-check the same 30s
+# operation deadline. Drives a real local HTTP server through the real
+# ``urllib.request.HTTPDigestAuthHandler`` control flow -- not a mocked
+# ``client._get``.
+# ---------------------------------------------------------------------------
+
+
+def _make_digest_handler(*, first_delay: float = 0.0, retry_delay: float = 0.0, body: bytes = b"OK"):
+    """Build a ``BaseHTTPRequestHandler`` subclass that challenges every
+    request with Digest auth, then accepts any ``Authorization: Digest ...``
+    retry as successful. It does not cryptographically validate the Digest
+    response -- these tests exercise deadline/timeout plumbing around the
+    real urllib retry control flow, not Digest correctness itself. Uses only
+    a fixed, non-secret test username/password/nonce; never a real NVR."""
+
+    request_log: list[str] = []
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_args) -> None:  # silence default stderr logging
+            pass
+
+        def do_GET(self) -> None:  # noqa: N802 (stdlib API name)
+            request_log.append(self.path)
+            auth = self.headers.get("Authorization", "")
+            if not auth.startswith("Digest"):
+                if first_delay:
+                    time.sleep(first_delay)
+                self.send_response(401)
+                self.send_header(
+                    "WWW-Authenticate",
+                    'Digest realm="recording-query-test", nonce="testnonce123", qop="auth"',
+                )
+                self.end_headers()
+                return
+            if retry_delay:
+                time.sleep(retry_delay)
+            try:
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                # The client may have already given up (its own timeout
+                # expired) by the time this slow response is ready --
+                # that is the exact behaviour under test, not a real
+                # server error.
+                pass
+
+    return _Handler, request_log
+
+
+class _LocalDigestServer:
+    """A real (loopback-only) HTTP server used to exercise the real urllib
+    Digest retry path end-to-end. Always bound to 127.0.0.1 on an ephemeral
+    port; shut down and joined on exit so no test process is left behind."""
+
+    def __init__(self, *, first_delay: float = 0.0, retry_delay: float = 0.0, body: bytes = b"OK") -> None:
+        handler_cls, self.request_log = _make_digest_handler(
+            first_delay=first_delay, retry_delay=retry_delay, body=body
+        )
+        self._server = http.server.HTTPServer(("127.0.0.1", 0), handler_cls)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    @property
+    def port(self) -> int:
+        return self._server.server_port
+
+    def __enter__(self) -> "_LocalDigestServer":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=2)
+        return False
+
+
+def _monotonic_sequence(*values: float):
+    """Returns given ``values`` in order on successive calls, then repeats
+    the final value forever -- avoids ``StopIteration`` if a caller ends up
+    invoking ``time.monotonic()`` slightly more times than expected."""
+    iterator = chain(values, repeat(values[-1]))
+    return lambda: next(iterator)
+
+
+class DigestRetryDeadlineTests(unittest.TestCase):
+    def _client_for(self, server: "_LocalDigestServer") -> recording_query.DahuaRecordingClient:
+        return recording_query.DahuaRecordingClient(
+            recording_query.NvrHttpConfig(
+                host="127.0.0.1", http_port=server.port, username="user", password="pass"
+            )
+        )
+
+    def test_digest_retry_recomputes_and_uses_shortened_remaining_timeout(self) -> None:
+        # The first 401 exchange is simulated as having consumed almost all
+        # of the operation deadline (mocked monotonic clock, not a real
+        # sleep). The retry must then use only the small remaining slice --
+        # proven by making the *real* retry response slow enough (0.3s, a
+        # small deterministic margin) that it only ever completes if the
+        # retry incorrectly reused a much larger timeout.
+        with _LocalDigestServer(retry_delay=0.3) as server:
+            client = self._client_for(server)
+            deadline = 10.0
+            monotonic = _monotonic_sequence(0.0, 9.95)
+            with patch.object(recording_query.time, "monotonic", side_effect=monotonic):
+                with self.assertRaises((TimeoutError, OSError)):
+                    client._get(
+                        "/cgi-bin/mediaFileFind.cgi",
+                        [("action", "factory.create")],
+                        deadline,
+                    )
+            self.assertEqual(len(server.request_log), 2)
+
+    def test_digest_retry_succeeds_and_query_result_is_not_corrupted(self) -> None:
+        with _LocalDigestServer(body=b"result=abc123") as server:
+            client = self._client_for(server)
+            deadline = time.monotonic() + 5.0
+            body = client._get(
+                "/cgi-bin/mediaFileFind.cgi",
+                [("action", "factory.create")],
+                deadline,
+            )
+
+        self.assertEqual(body, "result=abc123")
+
+    def test_no_retry_sent_once_deadline_already_exhausted(self) -> None:
+        # By the time the (real) 401 response is processed, the mocked
+        # monotonic clock reports the deadline has already passed -- no
+        # second (retry) request may be sent to the server at all.
+        with _LocalDigestServer() as server:
+            client = self._client_for(server)
+            deadline = 10.0
+            monotonic = _monotonic_sequence(5.0, 11.0)
+            with patch.object(recording_query.time, "monotonic", side_effect=monotonic):
+                with self.assertRaises(TimeoutError):
+                    client._get(
+                        "/cgi-bin/mediaFileFind.cgi",
+                        [("action", "factory.create")],
+                        deadline,
+                    )
+            self.assertEqual(len(server.request_log), 1)
+
+
+class NoAdjustableSocketFailClosedTests(unittest.TestCase):
+    """Finding 2, acceptance 8: when the response object exposes no
+    adjustable underlying socket, the read loop must fail closed after a
+    small, fixed number of iterations rather than silently trusting a
+    peer that could otherwise trickle data for an unbounded number of
+    reads. Purely iteration-count based -- no reliance on wall-clock time,
+    so this cannot be flaky."""
+
+    def test_response_without_adjustable_socket_fails_closed(self) -> None:
+        client = recording_query.DahuaRecordingClient(
+            recording_query.NvrHttpConfig(host="127.0.0.1", http_port=1, username="a", password="b")
+        )
+
+        class _NoSocketResponse:
+            def __init__(self) -> None:
+                self._chunks = [b"partial-data", b"more-data", b"even-more"]
+
+            def read1(self, _n: int = -1) -> bytes:
+                if self._chunks:
+                    return self._chunks.pop(0)
+                return b""
+
+            def read(self, _n: int = -1) -> bytes:  # pragma: no cover - unused
+                return self.read1(_n)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc) -> bool:
+                return False
+
+        response = _NoSocketResponse()
+        with patch.object(client.opener, "open", return_value=response):
+            with self.assertRaises(TimeoutError):
+                client._get(
+                    "/cgi-bin/mediaFileFind.cgi",
+                    [("action", "factory.create")],
+                    time.monotonic() + 100,
+                )
+        # Only one read was ever attempted without an adjustable socket
+        # before the loop failed closed.
+        self.assertEqual(len(response._chunks), 2)
+
+
+# ---------------------------------------------------------------------------
+# Bounded M2B fix, Finding 3: RTCP packets on the video interleaved channel
+# must not be misclassified as RTP video, and must not extend the RTP
+# first-packet deadline. Goes through the real ``_observe_rtp`` parser.
+# ---------------------------------------------------------------------------
+
+
+def _rtcp_sender_report(channel: int) -> bytes:
+    # RTCP header: V=2 (bits 7-6), P=0, RC=0 in byte0; byte1 = packet type
+    # 200 (Sender Report). Same interleaved-frame envelope, length (>=12)
+    # and RTP-version bits as a real RTP video packet.
+    payload = bytes([0x80, 200]) + b"\x00\x06" + b"\x00" * 8
+    return bytes([0x24, channel]) + len(payload).to_bytes(2, "big") + payload
+
+
+class RtcpNotMisclassifiedAsRtpTests(unittest.TestCase):
+    def _advancing_clock(self):
+        clock = [0.0]
+
+        def _fake_perf_counter() -> float:
+            clock[0] += 0.05
+            return clock[0]
+
+        return clock, _fake_perf_counter
+
+    def test_two_rtcp_sender_reports_on_video_channel_are_not_live(self) -> None:
+        video_channel = 0
+        clock, fake_perf_counter = self._advancing_clock()
+        fake_sock = _ScriptedClockSocket(
+            clock,
+            _rtcp_sender_report(video_channel),
+            frame1_at=0.1,
+            frame2=_rtcp_sender_report(video_channel),
+            frame2_at=0.2,
+        )
+
+        with patch.object(live_probe.time, "perf_counter", side_effect=fake_perf_counter):
+            result = live_probe._observe_rtp(fake_sock, b"", video_channel)
+
+        self.assertFalse(result["live_video"])
+
+    def test_rtcp_packet_does_not_extend_the_first_packet_deadline(self) -> None:
+        # An RTCP packet arriving just before the original 3.0s deadline
+        # must NOT push the deadline out by RTP_AFTER_FIRST_PACKET_SECONDS;
+        # a real RTP packet arriving only after that original deadline
+        # would have expired must still be reported as not-live.
+        video_channel = 0
+        clock, fake_perf_counter = self._advancing_clock()
+        real_rtp_frame = _rtp_frame(video_channel, timestamp=999)
+        fake_sock = _ScriptedClockSocket(
+            clock,
+            _rtcp_sender_report(video_channel),
+            frame1_at=2.9,
+            frame2=real_rtp_frame,
+            frame2_at=4.5,
+        )
+
+        with patch.object(live_probe.time, "perf_counter", side_effect=fake_perf_counter):
+            result = live_probe._observe_rtp(fake_sock, b"", video_channel)
+
+        self.assertFalse(result["live_video"])
+
+    def test_wrong_channel_packet_does_not_extend_deadline(self) -> None:
+        video_channel = 0
+        wrong_channel = 5
+        clock, fake_perf_counter = self._advancing_clock()
+        real_rtp_frame = _rtp_frame(video_channel, timestamp=999)
+        fake_sock = _ScriptedClockSocket(
+            clock,
+            _rtp_frame(wrong_channel, timestamp=1),
+            frame1_at=2.9,
+            frame2=real_rtp_frame,
+            frame2_at=4.5,
+        )
+
+        with patch.object(live_probe.time, "perf_counter", side_effect=fake_perf_counter):
+            result = live_probe._observe_rtp(fake_sock, b"", video_channel)
+
+        self.assertFalse(result["live_video"])
+
+    def test_malformed_packet_does_not_extend_deadline(self) -> None:
+        video_channel = 0
+        clock, fake_perf_counter = self._advancing_clock()
+        malformed = bytes([0x24, video_channel]) + (2).to_bytes(2, "big") + b"\x80\x60"  # < 12 bytes
+        real_rtp_frame = _rtp_frame(video_channel, timestamp=999)
+        fake_sock = _ScriptedClockSocket(
+            clock,
+            malformed,
+            frame1_at=2.9,
+            frame2=real_rtp_frame,
+            frame2_at=4.5,
+        )
+
+        with patch.object(live_probe.time, "perf_counter", side_effect=fake_perf_counter):
+            result = live_probe._observe_rtp(fake_sock, b"", video_channel)
+
+        self.assertFalse(result["live_video"])
+
+    def test_two_valid_rtp_video_packets_are_still_live(self) -> None:
+        # Existing positive-path behaviour must remain PASS.
+        video_channel = 0
+        clock, fake_perf_counter = self._advancing_clock()
+        frame1 = _rtp_frame(video_channel, timestamp=1000)
+        frame2 = _rtp_frame(video_channel, timestamp=2000)
+        fake_sock = _ScriptedClockSocket(clock, frame1, frame1_at=0.1, frame2=frame2, frame2_at=0.2)
+
+        with patch.object(live_probe.time, "perf_counter", side_effect=fake_perf_counter):
+            result = live_probe._observe_rtp(fake_sock, b"", video_channel)
+
+        self.assertTrue(result["live_video"])
+
+
+# ---------------------------------------------------------------------------
+# Bounded M2B fix, Finding 4: common network OSErrors must map to
+# nvr_unreachable by exception type, not by OS/locale-dependent message
+# text. Drives the real probe_channel() exception handling.
+# ---------------------------------------------------------------------------
+
+
+class OsErrorClassificationTests(unittest.TestCase):
+    def _nvr(self) -> live_probe.NvrConfig:
+        return live_probe.NvrConfig("127.0.0.1", 554, "user", "secret")
+
+    def test_dns_failure_maps_to_nvr_unreachable(self) -> None:
+        with patch.object(
+            live_probe.socket,
+            "create_connection",
+            side_effect=socket.gaierror("Name or service not known"),
+        ):
+            result = live_probe.probe_channel(1, self._nvr())
+
+        self.assertEqual(result, {"live_video": False, "error_code": "nvr_unreachable"})
+
+    def test_connection_refused_maps_to_nvr_unreachable(self) -> None:
+        with patch.object(
+            live_probe.socket,
+            "create_connection",
+            side_effect=ConnectionRefusedError("Connection refused"),
+        ):
+            result = live_probe.probe_channel(1, self._nvr())
+
+        self.assertEqual(result, {"live_video": False, "error_code": "nvr_unreachable"})
+
+    def test_generic_network_unreachable_oserror_maps_to_nvr_unreachable(self) -> None:
+        import errno
+
+        err = OSError("Network is unreachable")
+        err.errno = errno.ENETUNREACH
+        with patch.object(live_probe.socket, "create_connection", side_effect=err):
+            result = live_probe.probe_channel(1, self._nvr())
+
+        self.assertEqual(result, {"live_video": False, "error_code": "nvr_unreachable"})
+
+    def test_socket_timeout_still_maps_to_rtsp_timeout(self) -> None:
+        with patch.object(
+            live_probe.socket, "create_connection", side_effect=socket.timeout("timed out")
+        ):
+            result = live_probe.probe_channel(1, self._nvr())
+
+        self.assertEqual(result, {"live_video": False, "error_code": "rtsp_timeout"})
+
+    def test_protocol_runtime_error_does_not_map_to_nvr_unreachable(self) -> None:
+        sock = RtspOperationDeadlineTests._Socket()
+        with patch.object(live_probe.socket, "create_connection", return_value=sock), patch.object(
+            live_probe, "_send_authenticated", return_value=(500, {}, b"", b"", 2, "")
+        ):
+            result = live_probe.probe_channel(1, self._nvr())
+
+        self.assertEqual(result["error_code"], "internal_error")
+        self.assertNotEqual(result["error_code"], "nvr_unreachable")
 
 
 # ---------------------------------------------------------------------------

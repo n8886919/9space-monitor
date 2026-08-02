@@ -37,6 +37,14 @@ RTP_AFTER_FIRST_PACKET_SECONDS = 2.0
 MAX_RTSP_MESSAGE_BYTES = 128 * 1024
 MAX_RTSP_BODY_BYTES = 256 * 1024
 MAX_INTERLEAVED_FRAME_BYTES = 2 * 1024 * 1024
+# RTCP compound packet types (RFC 3550 section 12.1): Sender Report,
+# Receiver Report, Source Description, BYE and APP. These share the same
+# interleaved-frame envelope, minimum length and RTP-version bits as a real
+# RTP video packet, so they must be explicitly excluded by inspecting the
+# second payload byte (which for RTCP is the plain packet-type value, not an
+# RTP marker-bit/payload-type field) -- otherwise a peer sending only RTCP
+# traffic on the video channel could be misreported as live video.
+_RTCP_PACKET_TYPES = frozenset({200, 201, 202, 203, 204})
 
 
 def _set_socket_timeout_for_deadline(
@@ -331,6 +339,11 @@ def _observe_rtp(sock: socket.socket, buffered: bytes, video_channel: int) -> di
         del data[: 4 + frame_length]
         if channel != video_channel or len(payload) < 12 or payload[0] >> 6 != 2:
             continue
+        if payload[1] in _RTCP_PACKET_TYPES:
+            # A valid-looking interleaved frame that is actually an RTCP
+            # report, not RTP video -- must not count towards "live" and
+            # must not extend the first-packet deadline below.
+            continue
         packets += 1
         timestamps.add(int.from_bytes(payload[4:8], "big"))
         # As soon as the first valid RTP packet arrives, extend the
@@ -348,7 +361,17 @@ def _observe_rtp(sock: socket.socket, buffered: bytes, video_channel: int) -> di
 
 
 def _classify_error(exc_or_reason: str) -> str:
-    """Map internal probe failure reasons to the stable API.md error codes.
+    """Map our own, internally-raised protocol/parser failure reasons
+    (``ValueError``/``RuntimeError`` messages we construct ourselves, e.g.
+    ``"describe_status_401"`` or ``"sdp_has_no_video"``) to the stable
+    API.md error codes.
+
+    This string-based matching is safe here because these messages are
+    entirely our own controlled, fixed vocabulary -- never the OS/locale
+    -dependent text of a real ``OSError`` (that case is handled separately
+    by ``_classify_os_error`` below, dispatched by exception *type* rather
+    than message text, since OS error strings such as "Name or service not
+    known" vary by platform/locale and must not be relied upon).
 
     Never include usernames, passwords, full RTSP URLs or exception text
     here; only short, pre-defined codes are allowed in the API response.
@@ -360,11 +383,20 @@ def _classify_error(exc_or_reason: str) -> str:
         return "rtsp_timeout"
     if "too_large" in reason:
         return "internal_error"
-    if "refused" in reason or "oserror" in reason or "connection" in reason:
-        return "nvr_unreachable"
     if "no_video" in reason or "sdp_has_no_video" in reason or "rtp_video_timeout" in reason:
         return "no_video"
     return "internal_error"
+
+
+def _classify_os_error(exc: OSError) -> str:
+    """Map a real network-layer ``OSError`` (DNS failure, connection
+    refused, unreachable network, reset, etc.) to ``nvr_unreachable`` based
+    purely on the exception *type*, never on ``str(exc)``. OS error message
+    text (e.g. "Name or service not known" vs "Network is unreachable") is
+    platform- and locale-dependent and must not be relied upon to decide
+    error classification.
+    """
+    return "nvr_unreachable"
 
 
 def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
@@ -448,10 +480,21 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
         if not live_video:
             error_code = "no_video"
     except TimeoutError:
-        error_code = _classify_error("timeout")
-    except ConnectionRefusedError:
-        error_code = _classify_error("refused")
-    except (OSError, ConnectionError, ValueError, RuntimeError) as err:
+        # socket.timeout is TimeoutError as of Python 3.10; TimeoutError is
+        # also an OSError subclass, so it must be checked before the
+        # generic OSError branch below.
+        error_code = "rtsp_timeout"
+    except OSError as err:
+        # Covers socket.gaierror (DNS resolution failures such as "Name or
+        # service not known"), ConnectionRefusedError, ConnectionError and
+        # any other OSError (e.g. ENETUNREACH "Network is unreachable").
+        # Classified purely by exception type -- never by OS/locale
+        # -dependent message text.
+        error_code = _classify_os_error(err)
+    except (ValueError, RuntimeError) as err:
+        # Our own protocol/parser failures (non-200 status, missing SDP
+        # video, missing session, etc.) -- never treated as a network
+        # -reachability problem regardless of message text.
         error_code = _classify_error(str(err) or type(err).__name__)
     finally:
         if sock is not None:
