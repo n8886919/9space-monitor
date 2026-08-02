@@ -142,29 +142,47 @@ class AddonApiClient:
         except (aiohttp.ClientError, TimeoutError):
             raise AddonCannotConnect("addon_unavailable") from None
 
+    @staticmethod
+    def _map_response_transport_error() -> AddonCannotConnect:
+        return AddonCannotConnect("addon_unavailable")
+
     async def async_get_health(self) -> None:
         """Validate the process health endpoint."""
         response = await self._request("/healthz")
-        async with response:
-            if response.status < 200 or response.status >= 300:
-                raise AddonInvalidResponse("unexpected_http_status")
-            try:
-                payload = await response.json()
-            except (ValueError, aiohttp.ContentTypeError):
-                raise AddonInvalidResponse("invalid_json") from None
+        try:
+            async with response:
+                if response.status < 200 or response.status >= 300:
+                    raise AddonInvalidResponse("unexpected_http_status")
+                try:
+                    payload = await response.json()
+                except (ValueError, aiohttp.ContentTypeError):
+                    raise AddonInvalidResponse("invalid_json") from None
+                except (aiohttp.ClientError, TimeoutError):
+                    raise self._map_response_transport_error() from None
+        except AddonApiError:
+            raise
+        except (aiohttp.ClientError, TimeoutError):
+            raise self._map_response_transport_error() from None
         if payload != {"status": "ok"}:
             raise AddonInvalidResponse("invalid_health_contract")
 
     async def async_get_channels(self) -> list[AddonChannel]:
         """Return all validated one-based channel states."""
         response = await self._request("/api/v1/channels")
-        async with response:
-            if response.status < 200 or response.status >= 300:
-                raise AddonInvalidResponse("unexpected_http_status")
-            try:
-                payload = await response.json()
-            except (ValueError, aiohttp.ContentTypeError):
-                raise AddonInvalidResponse("invalid_json") from None
+        try:
+            async with response:
+                if response.status < 200 or response.status >= 300:
+                    raise AddonInvalidResponse("unexpected_http_status")
+                try:
+                    payload = await response.json()
+                except (ValueError, aiohttp.ContentTypeError):
+                    raise AddonInvalidResponse("invalid_json") from None
+                except (aiohttp.ClientError, TimeoutError):
+                    raise self._map_response_transport_error() from None
+        except AddonApiError:
+            raise
+        except (aiohttp.ClientError, TimeoutError):
+            raise self._map_response_transport_error() from None
         if not isinstance(payload, list):
             raise AddonInvalidResponse("invalid_channels_contract")
         channels = [AddonChannel.from_json(item) for item in payload]
@@ -180,17 +198,25 @@ class AddonApiClient:
         response = await self._request(
             f"/api/v1/channels/{channel_id}/snapshot"
         )
-        async with response:
-            if response.status == 404:
-                raise AddonChannelNotFound("channel_not_found")
-            if response.status == 503:
-                raise AddonSnapshotUnavailable("snapshot_unavailable")
-            if response.status != 200:
-                raise AddonInvalidResponse("unexpected_http_status")
-            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
-            if content_type != "image/jpeg":
-                raise AddonInvalidResponse("invalid_snapshot_content_type")
-            body = await response.read()
+        try:
+            async with response:
+                if response.status == 404:
+                    raise AddonChannelNotFound("channel_not_found")
+                if response.status == 503:
+                    raise AddonSnapshotUnavailable("snapshot_unavailable")
+                if response.status != 200:
+                    raise AddonInvalidResponse("unexpected_http_status")
+                content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+                if content_type != "image/jpeg":
+                    raise AddonInvalidResponse("invalid_snapshot_content_type")
+                try:
+                    body = await response.read()
+                except (aiohttp.ClientError, TimeoutError):
+                    raise self._map_response_transport_error() from None
+        except AddonApiError:
+            raise
+        except (aiohttp.ClientError, TimeoutError):
+            raise self._map_response_transport_error() from None
         if not body:
             raise AddonInvalidResponse("empty_snapshot")
         return body

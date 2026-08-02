@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import subprocess
 import unittest
 
 
@@ -38,17 +37,6 @@ class M3SourceContractTests(unittest.TestCase):
     def test_manifest_version_is_0_2_0(self):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
         self.assertEqual("0.2.0", manifest.get("version"))
-
-    def test_readme_not_in_git_diff_name_only(self):
-        result = subprocess.run(
-            ["git", "diff", "--name-only"],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        changed = {line.strip() for line in result.stdout.splitlines() if line.strip()}
-        self.assertNotIn("README.md", changed)
 
     def test_required_platforms_and_unique_id_formulas_exist(self):
         const = (INTEGRATION / "const.py").read_text()

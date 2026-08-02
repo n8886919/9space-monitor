@@ -23,6 +23,9 @@ except ModuleNotFoundError:
     class ContentTypeError(ClientError):
         pass
 
+    class ClientPayloadError(ClientError):
+        pass
+
     class ClientTimeout:
         def __init__(self, *, total):
             self.total = total
@@ -30,6 +33,7 @@ except ModuleNotFoundError:
     aiohttp.ClientError = ClientError
     aiohttp.ClientConnectionError = ClientConnectionError
     aiohttp.ContentTypeError = ContentTypeError
+    aiohttp.ClientPayloadError = ClientPayloadError
     aiohttp.ClientTimeout = ClientTimeout
     aiohttp.ClientSession = object
     sys.modules["aiohttp"] = aiohttp
@@ -56,16 +60,31 @@ CHANNEL = {
 
 
 class FakeResponse:
-    def __init__(self, status=200, *, payload=None, body=b"", content_type="application/json"):
+    def __init__(
+        self,
+        status=200,
+        *,
+        payload=None,
+        body=b"",
+        content_type="application/json",
+        enter_raises: Exception | None = None,
+        exit_raises: Exception | None = None,
+    ):
         self.status = status
         self._payload = payload
         self._body = body
         self.headers = {"Content-Type": content_type}
+        self._enter_raises = enter_raises
+        self._exit_raises = exit_raises
 
     async def __aenter__(self):
+        if self._enter_raises is not None:
+            raise self._enter_raises
         return self
 
     async def __aexit__(self, *_args):
+        if self._exit_raises is not None:
+            raise self._exit_raises
         return None
 
     async def json(self):
@@ -74,7 +93,16 @@ class FakeResponse:
         return self._payload
 
     async def read(self):
+        if isinstance(self._body, Exception):
+            raise self._body
         return self._body
+
+
+def make_content_type_error() -> Exception:
+    try:
+        return aiohttp.ContentTypeError(None, ())
+    except TypeError:
+        return aiohttp.ContentTypeError()
 
 
 class FakeSession:
@@ -129,6 +157,108 @@ class AddonApiTests(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaisesRegex(addon_api.AddonCannotConnect, "addon_unavailable"):
             await client.async_get_health()
+
+    async def test_response_context_enter_client_error_maps_to_cannot_connect(self):
+        secret = "http://user:pass@fake-secret-addon/path"
+        for api_call, response in (
+            (
+                lambda client: client.async_get_health(),
+                FakeResponse(enter_raises=aiohttp.ClientConnectionError(secret)),
+            ),
+            (
+                lambda client: client.async_get_channels(),
+                FakeResponse(enter_raises=aiohttp.ClientConnectionError(secret)),
+            ),
+            (
+                lambda client: client.async_get_snapshot(1),
+                FakeResponse(content_type="image/jpeg", enter_raises=aiohttp.ClientConnectionError(secret)),
+            ),
+        ):
+            with self.subTest(api_call=api_call):
+                client = addon_api.AddonApiClient("http://addon:8000", FakeSession([response]))
+                with self.assertRaises(addon_api.AddonCannotConnect) as ctx:
+                    await api_call(client)
+                self.assertNotIn(secret, str(ctx.exception))
+
+    async def test_response_context_exit_client_error_maps_to_cannot_connect(self):
+        secret = "credential=demo:pass"
+        client = addon_api.AddonApiClient(
+            "http://addon:8000",
+            FakeSession([
+                FakeResponse(
+                    payload={"status": "ok"},
+                    exit_raises=aiohttp.ClientConnectionError(secret),
+                )
+            ]),
+        )
+        with self.assertRaises(addon_api.AddonCannotConnect) as ctx:
+            await client.async_get_health()
+        self.assertNotIn(secret, str(ctx.exception))
+
+    async def test_json_client_error_maps_to_cannot_connect(self):
+        secret = "http://fake-secret-addon/healthz"
+        for api_call, payload_error in (
+            (lambda client: client.async_get_health(), aiohttp.ClientPayloadError(secret)),
+            (lambda client: client.async_get_channels(), aiohttp.ClientPayloadError(secret)),
+        ):
+            with self.subTest(api_call=api_call):
+                client = addon_api.AddonApiClient(
+                    "http://addon:8000", FakeSession([FakeResponse(payload=payload_error)])
+                )
+                with self.assertRaises(addon_api.AddonCannotConnect) as ctx:
+                    await api_call(client)
+                self.assertNotIn(secret, str(ctx.exception))
+
+    async def test_json_invalid_payload_maps_to_invalid_json(self):
+        for api_call, payload_error in (
+            (lambda client: client.async_get_health(), ValueError("bad json")),
+            (lambda client: client.async_get_channels(), ValueError("bad json")),
+            (lambda client: client.async_get_health(), make_content_type_error()),
+            (lambda client: client.async_get_channels(), make_content_type_error()),
+        ):
+            with self.subTest(api_call=api_call, payload_error=type(payload_error).__name__):
+                client = addon_api.AddonApiClient(
+                    "http://addon:8000", FakeSession([FakeResponse(payload=payload_error)])
+                )
+                with self.assertRaisesRegex(addon_api.AddonInvalidResponse, "invalid_json"):
+                    await api_call(client)
+
+    async def test_json_timeout_maps_to_cannot_connect(self):
+        for api_call in (
+            lambda client: client.async_get_health(),
+            lambda client: client.async_get_channels(),
+        ):
+            with self.subTest(api_call=api_call):
+                client = addon_api.AddonApiClient(
+                    "http://addon:8000", FakeSession([FakeResponse(payload=TimeoutError("slow"))])
+                )
+                with self.assertRaisesRegex(addon_api.AddonCannotConnect, "addon_unavailable"):
+                    await api_call(client)
+
+    async def test_snapshot_read_client_error_maps_to_cannot_connect(self):
+        secret = "user=admin&password=secret"
+        client = addon_api.AddonApiClient(
+            "http://addon:8000",
+            FakeSession(
+                [
+                    FakeResponse(
+                        body=aiohttp.ClientPayloadError(secret),
+                        content_type="image/jpeg",
+                    )
+                ]
+            ),
+        )
+        with self.assertRaises(addon_api.AddonCannotConnect) as ctx:
+            await client.async_get_snapshot(1)
+        self.assertNotIn(secret, str(ctx.exception))
+
+    async def test_snapshot_read_timeout_maps_to_cannot_connect(self):
+        client = addon_api.AddonApiClient(
+            "http://addon:8000",
+            FakeSession([FakeResponse(body=TimeoutError("timeout"), content_type="image/jpeg")]),
+        )
+        with self.assertRaisesRegex(addon_api.AddonCannotConnect, "addon_unavailable"):
+            await client.async_get_snapshot(1)
 
     async def test_snapshot_status_semantics(self):
         for status, error in (
