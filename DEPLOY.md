@@ -103,11 +103,17 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
 ssh -p "$HA_SSH_PORT" "$REMOTE" "
   set -eu
-  BACKUP=/config/9space_backups/$STAMP
-  mkdir -p \"\$BACKUP\"
+  test -d /config/9space_backups
+  BACKUP=\$(mktemp -d "/config/9space_backups/$STAMP.XXXXXX")
+  ARTIFACT_DIR=\"\$BACKUP/deployment_artifacts\"
+  mkdir \"\$ARTIFACT_DIR\"
 
   if [ -d '$INTEGRATION_REMOTE_DIR' ]; then
-    cp -a '$INTEGRATION_REMOTE_DIR' \"\$BACKUP/integration\"
+    command -v jq >/dev/null
+    jq -e '.domain == "nvr_monitor" and (.version | type == "string")' '$INTEGRATION_REMOTE_DIR/manifest.json' >/dev/null
+    test ! -e \"\$ARTIFACT_DIR/integration_predeploy\"
+    cp -a '$INTEGRATION_REMOTE_DIR' \"\$ARTIFACT_DIR/integration_predeploy\"
+    test -f \"\$ARTIFACT_DIR/integration_predeploy/manifest.json\"
   fi
 
   if [ -d '$ADDON_REMOTE_DIR' ]; then
@@ -120,10 +126,11 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
   test -s \"\$BACKUP/core.config_entries\"
 
   echo \"BACKUP=\$BACKUP\"
+  echo \"ARTIFACT_DIR=\$ARTIFACT_DIR\"
 "
 ```
 
-記下輸出的 backup path。`/config/.storage/core.config_entries` 在 M4 只允許複製作備份，不得編輯、不得直接覆寫。
+記下輸出的 `BACKUP` 與 `ARTIFACT_DIR`；後續 integration 指令以 `BACKUP_PATH` 表示這次輸出的 `BACKUP`。`/config/.storage/core.config_entries` 在 M4 只允許複製作備份，不得編輯、不得直接覆寫。
 
 ## M4 快速路徑（預設）
 
@@ -323,34 +330,101 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 執行前先確認已完成「M4 共用備份」且已有 backup path 紀錄。
 
+### Integration layout 不變量（fail-closed）
+
+Home Assistant 會檢查 `/config/custom_components` 的第一層目錄。該層中，`domain: "nvr_monitor"` 的 manifest **精確只能有一份**，而且路徑必須是：
+
+```text
+/config/custom_components/nvr_monitor/manifest.json
+```
+
+因此 `/config/custom_components` 下禁止建立任何 integration 暫存、predeploy、failed、rollback 或 old source，特別是 `.nvr_monitor*`、`nvr_monitor.old*`、`nvr_monitor.bak*`。所有這些 artifacts 只能在 `/tmp` 或這次備份的 `/config/9space_backups/<timestamp>/deployment_artifacts`。
+
+以下 gate 必須在換入前、以及每次 `ha core check`／`ha core restart` 前執行；任何不符都立刻停止，不能以刪除或移動未預先核准的目錄繞過。
+
+下列是唯一的 production helper 定義。每次 remote integration 操作都要將它完整傳入同一個 `bash -s` session；不可複製出不同版本。它以 `jq` 驗證 JSON，缺少 `jq`、manifest 壞掉、version 不符、或 device 不同都會 fail-closed。
+
+```bash
+# DEPLOY_LAYOUT_HELPER_BEGIN
+require_jq() { command -v jq >/dev/null || { echo 'jq is required' >&2; return 1; }; }
+manifest_ok() { test -f "$1/manifest.json" && test -f "$1/__init__.py" && jq -e --arg v "$2" '.domain == "nvr_monitor" and .version == $v' "$1/manifest.json" >/dev/null; }
+verify_nvr_monitor_layout() {
+  local d m count=0 expected="$CUSTOM_COMPONENTS/nvr_monitor/manifest.json"
+  require_jq || return; for d in "$CUSTOM_COMPONENTS"/* "$CUSTOM_COMPONENTS"/.[!.]* "$CUSTOM_COMPONENTS"/..?*; do
+    test -d "$d" || continue; m="$d/manifest.json"; test -f "$m" || continue
+    jq -e 'type == "object" and (.domain | type == "string")' "$m" >/dev/null || return 1
+    if jq -e '.domain == "nvr_monitor"' "$m" >/dev/null; then count=$((count + 1)); test "$m" = "$expected" || return 1; fi
+  done; test "$count" -eq 1
+}
+same_filesystem() { test "$(stat -c %d "$1")" = "$(stat -c %d "$2")"; }
+begin_transaction() {
+  TXN_DIR=$(mktemp -d "$ARTIFACT_DIR/transaction.XXXXXX") || return 1
+  STAGE="$TXN_DIR/stage"; REPLACED="$TXN_DIR/integration_replaced"; FAILED="$TXN_DIR/integration_failed"
+  test ! -e "$REPLACED" && test ! -e "$FAILED" && mkdir "$STAGE"
+}
+restore_canonical() {
+  test -d "$REPLACED" || return 1
+  if test -d "$CANONICAL"; then mv "$CANONICAL" "$FAILED" || return 1; fi
+  mv "$REPLACED" "$CANONICAL" && verify_nvr_monitor_layout && ha core check
+}
+swap_verified_stage() {
+  manifest_ok "$STAGE" "$EXPECTED_VERSION" && verify_nvr_monitor_layout && same_filesystem "$STAGE" "$CUSTOM_COMPONENTS" || return 1
+  test -n "${TXN_DIR:-}" && test ! -e "$REPLACED" || return 1
+  # Two renames have a short no-canonical window; Core is not reloaded in it.
+  mv "$CANONICAL" "$REPLACED" || return 1
+  if ! mv "$STAGE" "$CANONICAL" || ! verify_nvr_monitor_layout || ! ha core check; then restore_canonical; return 1; fi
+}
+filter_logs_after_marker() {
+  local marker="$1" output="$2"
+  ha core logs | awk -v marker="$marker" '
+    /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][[:space:]][0-9][0-9]:[0-9][0-9]:[0-9][0-9]/ {
+      enabled=(substr($0, 1, 19) >= marker); if (enabled) saw_at_or_after=1
+    }
+    enabled { print }
+    END { if (!saw_at_or_after) exit 64 }
+  ' >"$output"
+}
+# DEPLOY_LAYOUT_HELPER_END
+```
+
+本次現場曾觀察到下列 legacy sibling backup；它們不可在這一輪移動或刪除，但 gate 會因其 manifest 而 fail-closed，須先由使用者另行授權處理：
+
+```text
+nvr_monitor.bak_20260731_230508
+nvr_monitor.bak_20260801_150229
+nvr_monitor.old
+nvr_monitor.old.20260802T154701Z
+```
+
 ### 1. 上傳 integration
 
 ```bash
 tar -C custom_components -czf /tmp/nvr_monitor.tgz nvr_monitor
+awk '/DEPLOY_LAYOUT_HELPER_BEGIN/{keep=1} keep{print} /DEPLOY_LAYOUT_HELPER_END/{exit}' DEPLOY.md \
+  > /tmp/nvr_monitor_layout_helper.sh
+bash -n /tmp/nvr_monitor_layout_helper.sh
 
 scp -P "$HA_SSH_PORT" \
   /tmp/nvr_monitor.tgz \
   "$REMOTE:/tmp/nvr_monitor.tgz"
+scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh \
+  "$REMOTE:/tmp/nvr_monitor_layout_helper.sh"
 
-ssh -p "$HA_SSH_PORT" "$REMOTE" "
-  set -eu
-  rm -rf '$INTEGRATION_REMOTE_DIR.new'
-  mkdir -p '$INTEGRATION_REMOTE_DIR.new'
-  tar -xzf /tmp/nvr_monitor.tgz \
-    --strip-components=1 \
-    -C '$INTEGRATION_REMOTE_DIR.new'
-  test -f '$INTEGRATION_REMOTE_DIR.new/manifest.json'
-
-  rm -rf '$INTEGRATION_REMOTE_DIR.old'
-  if [ -d '$INTEGRATION_REMOTE_DIR' ]; then
-    mv '$INTEGRATION_REMOTE_DIR' '$INTEGRATION_REMOTE_DIR.old'
-  fi
-  mv '$INTEGRATION_REMOTE_DIR.new' '$INTEGRATION_REMOTE_DIR'
-  rm -f /tmp/nvr_monitor.tgz
-
-  ha core check
-  ha core restart
-"
+ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
+set -euo pipefail
+BACKUP_PATH="<recorded-backup-path>"; EXPECTED_VERSION="0.2.2"
+CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
+ARTIFACT_DIR="$BACKUP_PATH/deployment_artifacts"; REPLACED="$ARTIFACT_DIR/integration_replaced"
+test -d "$ARTIFACT_DIR"
+# The operator has saved the single helper block verbatim as this local remote file.
+source /tmp/nvr_monitor_layout_helper.sh
+begin_transaction
+cleanup() { rm -f /tmp/nvr_monitor.tgz /tmp/nvr_monitor_layout_helper.sh; }; trap cleanup EXIT
+tar -xzf /tmp/nvr_monitor.tgz --strip-components=1 -C "$STAGE"
+swap_verified_stage
+RESTART_MARKER=$(date '+%Y-%m-%d %H:%M:%S'); echo "nvr_monitor restart marker: $RESTART_MARKER"
+verify_nvr_monitor_layout; ha core restart || { echo 'restart failed; run the new-transaction rollback below once' >&2; exit 1; }
+REMOTE_SCRIPT
 ```
 
 ### 2. 等待 Home Assistant
@@ -438,10 +512,22 @@ Engineer 不得自行替使用者選擇。
 查看 log：
 
 ```bash
-ssh -p "$HA_SSH_PORT" "$REMOTE" '
-  ha core logs | grep -iE "nvr_monitor|traceback|error" | tail -n 100 || true
-'
+awk '/DEPLOY_LAYOUT_HELPER_BEGIN/{keep=1} keep{print} /DEPLOY_LAYOUT_HELPER_END/{exit}' DEPLOY.md > /tmp/nvr_monitor_layout_helper.sh
+bash -n /tmp/nvr_monitor_layout_helper.sh
+scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh "$REMOTE:/tmp/nvr_monitor_layout_helper.sh"
+ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
+  set -euo pipefail
+  # Set this to the marker printed immediately before this deployment restart.
+  RESTART_MARKER="<YYYY-MM-DD HH:MM:SS>"
+  source /tmp/nvr_monitor_layout_helper.sh
+  log_file=$(mktemp /tmp/nvr-monitor-log.XXXXXX)
+  trap 'rm -f "$log_file" /tmp/nvr_monitor_layout_helper.sh' EXIT
+  filter_logs_after_marker "$RESTART_MARKER" "$log_file"
+  grep -iE "nvr_monitor|traceback|error" "$log_file" || true
+REMOTE_SCRIPT
 ```
+
+只可判讀 marker 之後的 log；不得把 restart 前的歷史 traceback 當成本次部署錯誤。若 Core log 格式不能以此 marker 做時間界線，停止並回報，改由操作者提供可驗證的本次 restart 後 log 範圍。
 
 Add-on log 命令依實際 slug：
 
@@ -455,18 +541,24 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 ### Integration rollback
 
 ```bash
-ssh -p "$HA_SSH_PORT" "$REMOTE" "
-  set -eu
-  ha core stop
-  rm -rf '$INTEGRATION_REMOTE_DIR'
-  if [ -d '$INTEGRATION_REMOTE_DIR.old' ]; then
-    mv '$INTEGRATION_REMOTE_DIR.old' '$INTEGRATION_REMOTE_DIR'
-  fi
-  ha core start
-"
+awk '/DEPLOY_LAYOUT_HELPER_BEGIN/{keep=1} keep{print} /DEPLOY_LAYOUT_HELPER_END/{exit}' DEPLOY.md > /tmp/nvr_monitor_layout_helper.sh
+bash -n /tmp/nvr_monitor_layout_helper.sh
+scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh "$REMOTE:/tmp/nvr_monitor_layout_helper.sh"
+ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
+set -euo pipefail
+BACKUP_PATH="<recorded-backup-path>"; EXPECTED_VERSION="0.2.1"
+CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
+ARTIFACT_DIR="$BACKUP_PATH/deployment_artifacts"
+rollback_source="$ARTIFACT_DIR/integration_predeploy"; test -d "$rollback_source"
+source /tmp/nvr_monitor_layout_helper.sh
+begin_transaction
+cleanup() { rm -f /tmp/nvr_monitor_layout_helper.sh; }; trap cleanup EXIT
+cp -a "$rollback_source/." "$STAGE"; swap_verified_stage
+verify_nvr_monitor_layout; ha core restart
+REMOTE_SCRIPT
 ```
 
-還原 integration source 後，必須重新啟動 Core。
+Rollback 使用相同的唯一 helper；還原 integration source 後，必須先通過 `ha core check` 才能重新啟動 Core，且 failed source 與 rollback source 都保留在 `deployment_artifacts`，不留在 `custom_components`。
 
 若 entry data 已改成 `addon_base_url`：
 

@@ -1,0 +1,197 @@
+"""Regression checks for the fail-closed integration deployment layout."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DEPLOY = (ROOT / "DEPLOY.md").read_text()
+DOMAIN = "nvr_monitor"
+
+
+def write_manifest(directory: Path, domain: str = DOMAIN) -> None:
+    directory.mkdir(parents=True)
+    (directory / "manifest.json").write_text(json.dumps({"domain": domain}))
+
+
+def find_nvr_monitor_manifests(custom_components: Path) -> list[Path]:
+    """Mirror DEPLOY.md's first-level manifest gate without mutating its input."""
+    return [
+        child / "manifest.json"
+        for child in custom_components.iterdir()
+        if child.is_dir()
+        and (child / "manifest.json").is_file()
+        and json.loads((child / "manifest.json").read_text()).get("domain") == DOMAIN
+    ]
+
+
+def canonical_layout_is_safe(custom_components: Path) -> bool:
+    expected = custom_components / DOMAIN / "manifest.json"
+    return find_nvr_monitor_manifests(custom_components) == [expected]
+
+
+class DeployLayoutSafetyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.config = Path(self.tempdir.name) / "config"
+        self.components = self.config / "custom_components"
+        self.components.mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        self.tempdir.cleanup()
+
+    def test_canonical_only_layout_passes(self) -> None:
+        write_manifest(self.components / DOMAIN)
+        self.assertTrue(canonical_layout_is_safe(self.components))
+
+    def test_dot_leading_staging_fails(self) -> None:
+        write_manifest(self.components / DOMAIN)
+        write_manifest(self.components / ".nvr_monitor.deploy")
+        self.assertFalse(canonical_layout_is_safe(self.components))
+
+    def test_old_and_backup_same_domain_directories_fail(self) -> None:
+        for sibling in ("nvr_monitor.old", "nvr_monitor.bak_20260802"):
+            with self.subTest(sibling=sibling), tempfile.TemporaryDirectory() as tempdir:
+                components = Path(tempdir) / "custom_components"
+                components.mkdir()
+                write_manifest(components / DOMAIN)
+                write_manifest(components / sibling)
+                self.assertFalse(canonical_layout_is_safe(components))
+
+    def test_deployment_artifact_outside_custom_components_passes(self) -> None:
+        write_manifest(self.components / DOMAIN)
+        artifact = (
+            self.config
+            / "9space_backups/20260803T000000Z/deployment_artifacts/integration_predeploy"
+        )
+        write_manifest(artifact)
+        self.assertTrue(canonical_layout_is_safe(self.components))
+
+    def test_document_has_fail_closed_external_artifacts_only(self) -> None:
+        self.assertIn("verify_nvr_monitor_layout", DEPLOY)
+        self.assertIn("test \"$count\" -eq 1", DEPLOY)
+        self.assertIn("deployment_artifacts", DEPLOY)
+        for forbidden in (".nvr_monitor*", "nvr_monitor.old*", "nvr_monitor.bak*"):
+            with self.subTest(forbidden=forbidden):
+                self.assertIn(forbidden, DEPLOY)
+        self.assertNotIn("$INTEGRATION_REMOTE_DIR.new", DEPLOY)
+        self.assertNotIn("$INTEGRATION_REMOTE_DIR.old", DEPLOY)
+        self.assertGreaterEqual(DEPLOY.count("DEPLOY_LAYOUT_HELPER_BEGIN"), 4)
+        self.assertIn("cleanup() { rm -f", DEPLOY)
+        self.assertNotIn('rm -rf "$TXN_DIR"', DEPLOY)
+
+    def test_document_keeps_storage_read_only(self) -> None:
+        self.assertIn("只允許複製作備份，不得編輯", DEPLOY)
+        self.assertNotIn("core.config_entries\n  mv", DEPLOY)
+
+    def test_layout_deployment_shell_blocks_parse_in_bash(self) -> None:
+        blocks = re.findall(r"```bash\n(.*?)```", DEPLOY, flags=re.DOTALL)
+        layout_blocks = [block for block in blocks if "verify_nvr_monitor_layout" in block]
+        self.assertGreaterEqual(len(layout_blocks), 3)
+        for block in layout_blocks:
+            with self.subTest(block=block[:60]):
+                result = subprocess.run(
+                    ["bash", "-n"], input=block, text=True, capture_output=True
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_production_helper_executes_layout_and_malformed_json_gates(self) -> None:
+        helper = re.search(
+            r"# DEPLOY_LAYOUT_HELPER_BEGIN\n(.*?)# DEPLOY_LAYOUT_HELPER_END",
+            DEPLOY,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(helper)
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            helper_path = root / "helper.sh"
+            helper_path.write_text(helper.group(1))
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            jq = fake_bin / "jq"
+            jq.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "try:\n data=json.load(open(sys.argv[-1]))\nexcept Exception: raise SystemExit(1)\n"
+                "expr=' '.join(sys.argv)\n"
+                "ok=isinstance(data,dict)\n"
+                "if 'domain == \\\"nvr_monitor\\\"' in expr: ok &= data.get('domain') == 'nvr_monitor'\n"
+                "if '.version == $v' in expr:\n i=sys.argv.index('--arg'); ok &= data.get('version') == sys.argv[i+2]\n"
+                "raise SystemExit(0 if ok else 1)\n"
+            )
+            jq.chmod(0o755)
+            components = root / "custom_components"
+            write_manifest(components / DOMAIN)
+            script = (
+                f"source {helper_path}\nCUSTOM_COMPONENTS={components}\n"
+                "verify_nvr_monitor_layout\n"
+            )
+            env = {**__import__("os").environ, "PATH": f"{fake_bin}:{__import__('os').environ['PATH']}"}
+            self.assertEqual(0, subprocess.run(["bash", "-c", script,], env=env).returncode)
+            write_manifest(components / ".nvr_monitor.stage")
+            self.assertNotEqual(0, subprocess.run(["bash", "-c", script], env=env).returncode)
+            (components / ".nvr_monitor.stage/manifest.json").write_text("{")
+            self.assertNotEqual(0, subprocess.run(["bash", "-c", script], env=env).returncode)
+
+    def test_production_helper_transaction_and_log_matrix(self) -> None:
+        """Exercise the extracted transaction driver with only temp directories/fakes."""
+        helper = re.search(r"# DEPLOY_LAYOUT_HELPER_BEGIN\n(.*?)# DEPLOY_LAYOUT_HELPER_END", DEPLOY, re.DOTALL).group(1)
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir); helper_path = root / "helper.sh"; helper_path.write_text(helper)
+            fake = root / "bin"; fake.mkdir()
+            (fake / "jq").write_text("#!/usr/bin/env python3\nimport json,sys\n\ntry: d=json.load(open(sys.argv[-1]))\nexcept: raise SystemExit(1)\ne=' '.join(sys.argv); ok=isinstance(d,dict)\nif '.version == $v' in e: ok &= d.get('version')==sys.argv[sys.argv.index('--arg')+2]\nraise SystemExit(0 if ok else 1)\n")
+            (fake / "ha").write_text("#!/bin/bash\nif [ \"$1 $2\" = 'core check' ]; then echo check >>\"$HA_CHECKS\"; if [ -n \"${HA_FAIL_ONCE:-}\" ] && [ ! -e \"$HA_FAIL_ONCE\" ]; then touch \"$HA_FAIL_ONCE\"; exit 1; fi; fi\nif [ \"$1 $2\" = 'core logs' ]; then printf '%s\\n' \"$HA_LOGS\"; exit \"${HA_LOG_STATUS:-0}\"; fi\nexit 0\n")
+            for f in fake.iterdir(): f.chmod(0o755)
+            cc=root/"cc"; art=root/"art"; art.mkdir(); canonical=cc/DOMAIN
+            def component(path, version="0.2.2"):
+                write_manifest(path); (path/"manifest.json").write_text(json.dumps({"domain":DOMAIN,"version":version})); (path/"__init__.py").touch()
+            component(canonical); component(art/"integration_predeploy", "0.2.1"); component(root/"candidate", "0.2.2")
+            checks=root/"checks"; env={**__import__('os').environ,"PATH":f"{fake}:{__import__('os').environ['PATH']}","HA_CHECKS":str(checks)}
+            base=f"source {helper_path}; CUSTOM_COMPONENTS={cc}; CANONICAL={canonical}; ARTIFACT_DIR={art}; EXPECTED_VERSION=0.2.2; "
+            # Success then a separate rollback transaction: no collision/nesting.
+            command=base+"begin_transaction; cp -a $CANONICAL/. $STAGE; swap_verified_stage; begin_transaction; EXPECTED_VERSION=0.2.1; cp -a $ARTIFACT_DIR/integration_predeploy/. $STAGE; swap_verified_stage"
+            self.assertEqual(0, subprocess.run(["bash","-c",command],env=env).returncode)
+            self.assertGreaterEqual(len(list(art.glob("transaction.*"))),2)
+            # Invalid rollback version fails before canonical is moved.
+            bad=base+"begin_transaction; cp -a $ARTIFACT_DIR/integration_predeploy/. $STAGE; EXPECTED_VERSION=9; ! swap_verified_stage; test -d $CANONICAL"
+            self.assertEqual(0, subprocess.run(["bash","-c",bad],env=env).returncode)
+            # core-check failure restores the original canonical.
+            fail_once=root/"fail_once"; fail=base+f"begin_transaction; cp -a {root}/candidate/. $STAGE; export HA_FAIL_ONCE={fail_once}; ! swap_verified_stage; grep -F '\"version\": \"0.2.1\"' $CANONICAL/manifest.json; grep -F '\"version\": \"0.2.2\"' $FAILED/manifest.json; test $(wc -l < $HA_CHECKS) -ge 2"
+            self.assertEqual(0, subprocess.run(["bash","-c",fail],env=env).returncode)
+            # A forced device mismatch fails before moving the canonical directory.
+            mismatch=base+"begin_transaction; cp -a $CANONICAL/. $STAGE; stat(){ [ \"$3\" = \"$STAGE\" ] && echo 1 || echo 2; }; ! swap_verified_stage; jq -e '.version == \"0.2.1\"' $CANONICAL/manifest.json"
+            self.assertEqual(0, subprocess.run(["bash","-c",mismatch],env=env).returncode)
+            # Directly execute production log state machine semantics.
+            for logs, status, expected in [("Traceback", 0, 1), ("2026-01-01 00:00:00 old", 0, 1), ("2026-01-01 00:00:00 old\nTraceback", 0, 1), ("2026-01-02 00:00:00 new\nTraceback", 0, 0), ("2026-01-02 00:00:00 partial\nTraceback", 7, 1)]:
+                output=root/"log"; cmd=base+f"set -euo pipefail; filter_logs_after_marker '2026-01-02 00:00:00' {output}; grep -iE 'traceback' {output} || true"
+                result=subprocess.run(["bash","-c",cmd],env={**env,"HA_LOGS":logs,"HA_LOG_STATUS":str(status)})
+                self.assertEqual(expected, 1 if result.returncode else 0)
+                if expected == 0: self.assertIn("Traceback", output.read_text())
+
+    def test_backup_mktemp_same_stamp_never_reuses_directory(self) -> None:
+        match = re.search(
+            r'BACKUP=\\?\$\(mktemp -d "(/config/9space_backups/\$STAMP\.XXXXXX)"\)',
+            DEPLOY,
+        )
+        self.assertIsNotNone(match, "DEPLOY must use a unique mktemp backup template")
+        deploy_template = match.group(1)
+        self.assertTrue(deploy_template.endswith("$STAMP.XXXXXX"))
+        with tempfile.TemporaryDirectory() as tempdir:
+            backups = Path(tempdir) / "backups"; backups.mkdir()
+            stamp = "20260803T000000Z"
+            template = str(backups / deploy_template.rsplit("/", 1)[1].replace("$STAMP", stamp))
+            first = Path(subprocess.check_output(["mktemp", "-d", template], text=True).strip())
+            (first / "sentinel").write_text("keep")
+            second = Path(subprocess.check_output(["mktemp", "-d", template], text=True).strip())
+            self.assertNotEqual(first, second)
+            self.assertEqual("keep", (first / "sentinel").read_text())
+
+
+if __name__ == "__main__":
+    unittest.main()
