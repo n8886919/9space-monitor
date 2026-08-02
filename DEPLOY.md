@@ -377,10 +377,15 @@ swap_verified_stage() {
 filter_logs_after_marker() {
   local marker="$1" output="$2"
   ha core logs | awk -v marker="$marker" '
-    /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][[:space:]][0-9][0-9]:[0-9][0-9]:[0-9][0-9]/ {
-      enabled=(substr($0, 1, 19) >= marker); if (enabled) saw_at_or_after=1
+    {
+      # Remove ANSI control sequences before testing timestamp boundaries.
+      line=$0
+      gsub(/\033\[[0-9;]*[[:alpha:]]/, "", line)
     }
-    enabled { print }
+    line ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][[:space:]][0-9][0-9]:[0-9][0-9]:[0-9][0-9]/ {
+      enabled=(substr(line, 1, 19) >= marker); if (enabled) saw_at_or_after=1
+    }
+    enabled { print line }
     END { if (!saw_at_or_after) exit 64 }
   ' >"$output"
 }

@@ -167,12 +167,78 @@ class DeployLayoutSafetyTests(unittest.TestCase):
             # A forced device mismatch fails before moving the canonical directory.
             mismatch=base+"begin_transaction; cp -a $CANONICAL/. $STAGE; stat(){ [ \"$3\" = \"$STAGE\" ] && echo 1 || echo 2; }; ! swap_verified_stage; jq -e '.version == \"0.2.1\"' $CANONICAL/manifest.json"
             self.assertEqual(0, subprocess.run(["bash","-c",mismatch],env=env).returncode)
-            # Directly execute production log state machine semantics.
-            for logs, status, expected in [("Traceback", 0, 1), ("2026-01-01 00:00:00 old", 0, 1), ("2026-01-01 00:00:00 old\nTraceback", 0, 1), ("2026-01-02 00:00:00 new\nTraceback", 0, 0), ("2026-01-02 00:00:00 partial\nTraceback", 7, 1)]:
-                output=root/"log"; cmd=base+f"set -euo pipefail; filter_logs_after_marker '2026-01-02 00:00:00' {output}; grep -iE 'traceback' {output} || true"
-                result=subprocess.run(["bash","-c",cmd],env={**env,"HA_LOGS":logs,"HA_LOG_STATUS":str(status)})
-                self.assertEqual(expected, 1 if result.returncode else 0)
-                if expected == 0: self.assertIn("Traceback", output.read_text())
+            # Directly execute production log filter semantics from DEPLOY.md.
+            cases = [
+                {
+                    "name": "no_ansi_normal_timestamp",
+                    "logs": "2026-01-02 00:00:00 new\nTraceback",
+                    "status": 0,
+                    "expect_nonzero": False,
+                    "expect_traceback": True,
+                },
+                {
+                    "name": "ansi_prefixed_marker_timestamp",
+                    "logs": "\x1b[32m2026-01-02 00:00:00 new\x1b[0m\nTraceback",
+                    "status": 0,
+                    "expect_nonzero": False,
+                    "expect_traceback": True,
+                },
+                {
+                    "name": "ansi_prefixed_multiline_traceback",
+                    "logs": (
+                        "\x1b[36m2026-01-02 00:00:00 new\x1b[0m\n"
+                        "\x1b[31mTraceback (most recent call last):\x1b[0m\n"
+                        "  File \"x.py\", line 1, in <module>"
+                    ),
+                    "status": 0,
+                    "expect_nonzero": False,
+                    "expect_traceback": True,
+                },
+                {
+                    "name": "only_old_timestamp_fails_closed",
+                    "logs": "2026-01-01 00:00:00 old\nTraceback",
+                    "status": 0,
+                    "expect_nonzero": True,
+                    "expect_traceback": False,
+                },
+                {
+                    "name": "no_timestamp_fails_closed",
+                    "logs": "Traceback without timestamp",
+                    "status": 0,
+                    "expect_nonzero": True,
+                    "expect_traceback": False,
+                },
+                {
+                    "name": "ha_core_logs_partial_output_then_exit7_propagates",
+                    "logs": "2026-01-02 00:00:00 partial\nTraceback",
+                    "status": 7,
+                    "expect_nonzero": True,
+                    "expect_traceback": False,
+                },
+            ]
+            for case in cases:
+                with self.subTest(case=case["name"]):
+                    output = root / f"log_{case['name']}"
+                    cmd = (
+                        base
+                        + f"set -euo pipefail; "
+                        + f"filter_logs_after_marker '2026-01-02 00:00:00' {output}; "
+                        + f"grep -iE 'traceback' {output} || true"
+                    )
+                    result = subprocess.run(
+                        ["bash", "-c", cmd],
+                        env={
+                            **env,
+                            "HA_LOGS": case["logs"],
+                            "HA_LOG_STATUS": str(case["status"]),
+                        },
+                    )
+                    if case["expect_nonzero"]:
+                        self.assertNotEqual(0, result.returncode)
+                    else:
+                        self.assertEqual(0, result.returncode)
+                    if case["expect_traceback"]:
+                        self.assertIn("Traceback", output.read_text())
 
     def test_backup_mktemp_same_stamp_never_reuses_directory(self) -> None:
         match = re.search(
