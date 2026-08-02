@@ -96,6 +96,8 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 
 無論是快速路徑、Generic Add-on Deployment、或後續 integration 部署，皆必須先完成備份並記錄 backup path。
 
+若 config-entry backup 任一步驟失敗，deployment gate 立即關閉，禁止進入 smoke test、integration upload、或任何 add-on operation。
+
 ```bash
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
@@ -112,8 +114,10 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
     cp -a '$ADDON_REMOTE_DIR' \"\$BACKUP/addon\"
   fi
 
+  test -f /config/.storage/core.config_entries
   cp -a /config/.storage/core.config_entries \
-    \"\$BACKUP/core.config_entries\" 2>/dev/null || true
+    \"\$BACKUP/core.config_entries\"
+  test -s \"\$BACKUP/core.config_entries\"
 
   echo \"BACKUP=\$BACKUP\"
 "
