@@ -228,6 +228,10 @@ class RtpDeadlineExtensionTests(unittest.TestCase):
 class _StaticSocket:
     def __init__(self, data: bytes):
         self._data = data
+        self.timeouts = []
+
+    def settimeout(self, value: float) -> None:
+        self.timeouts.append(value)
 
     def recv(self, n: int) -> bytes:
         chunk = self._data[:n]
@@ -254,11 +258,122 @@ class RtspResponseLimitTests(unittest.TestCase):
         # the header within an overall per-exchange deadline, even though
         # each individual recv() "succeeds" instantly.
         class _TrickleSocket:
+            def settimeout(self_inner, _value: float) -> None:
+                pass
+
             def recv(self_inner, _n: int) -> bytes:
                 return b"X"
 
         with self.assertRaises(TimeoutError):
             live_probe._read_rtsp_response(_TrickleSocket(), deadline=time.monotonic() - 0.001)
+
+    def test_recv_timeout_never_exceeds_remaining_deadline(self) -> None:
+        sock = _StaticSocket(b"RTSP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
+        with patch.object(live_probe.time, "monotonic", return_value=7.0):
+            live_probe._read_rtsp_response(sock, deadline=9.0)
+
+        self.assertTrue(sock.timeouts)
+        self.assertTrue(all(timeout <= 2.0 for timeout in sock.timeouts))
+
+
+class RtspOperationDeadlineTests(unittest.TestCase):
+    class _Socket:
+        def __init__(self) -> None:
+            self.timeout = None
+            self.closed = False
+
+        def settimeout(self, value: float) -> None:
+            self.timeout = value
+
+        def sendall(self, _data: bytes) -> None:
+            pass
+
+        def close(self) -> None:
+            self.closed = True
+
+    def test_describe_setup_play_share_one_deadline(self) -> None:
+        sock = self._Socket()
+        deadlines = []
+        responses = [
+            (
+                200,
+                {},
+                b"m=video 0 RTP/AVP 96\r\na=control:trackID=0\r\n",
+                b"",
+                2,
+                "",
+            ),
+            (
+                200,
+                {"session": "session-id", "transport": "interleaved=0-1"},
+                b"",
+                b"",
+                3,
+                "",
+            ),
+            (200, {}, b"", b"", 4, ""),
+        ]
+
+        def _fake_send_authenticated(*args, **kwargs):
+            deadlines.append(kwargs["deadline"])
+            return responses[len(deadlines) - 1]
+
+        nvr = live_probe.NvrConfig("127.0.0.1", 554, "user", "secret")
+        with patch.object(live_probe.time, "monotonic", return_value=100.0), patch.object(
+            live_probe.socket, "create_connection", return_value=sock
+        ), patch.object(
+            live_probe, "_send_authenticated", side_effect=_fake_send_authenticated
+        ), patch.object(
+            live_probe, "_observe_rtp", return_value={"live_video": True}
+        ):
+            result = live_probe.probe_channel(1, nvr)
+
+        self.assertEqual(result, {"live_video": True, "error_code": None})
+        self.assertEqual(len(deadlines), 3)
+        self.assertEqual(len(set(deadlines)), 1)
+
+    def test_authentication_retry_reuses_same_deadline(self) -> None:
+        sock = self._Socket()
+        calls = []
+
+        def _fake_send_request(*args, **kwargs):
+            calls.append(kwargs["deadline"])
+            if len(calls) == 1:
+                return 401, {"www-authenticate": 'Digest realm="nvr", nonce="abc"'}, b"", b""
+            return 200, {}, b"", b""
+
+        with patch.object(live_probe, "_send_request", side_effect=_fake_send_request):
+            status, *_ = live_probe._send_authenticated(
+                sock,
+                "DESCRIBE",
+                "rtsp://127.0.0.1/stream",
+                1,
+                "user",
+                "secret",
+                "",
+                deadline=123.0,
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, [123.0, 123.0])
+
+    def test_deadline_exhausted_during_recv_maps_to_rtsp_timeout(self) -> None:
+        clock = [0.0]
+
+        class _TrickleSocket(self._Socket):
+            def recv(self_inner, _n: int) -> bytes:
+                clock[0] = 2.0
+                return b"X"
+
+        sock = _TrickleSocket()
+        nvr = live_probe.NvrConfig("127.0.0.1", 554, "user", "secret")
+        with patch.object(live_probe, "RTSP_OPERATION_TIMEOUT", 1.0), patch.object(
+            live_probe.time, "monotonic", side_effect=lambda: clock[0]
+        ), patch.object(live_probe.socket, "create_connection", return_value=sock):
+            result = live_probe.probe_channel(1, nvr)
+
+        self.assertEqual(result, {"live_video": False, "error_code": "rtsp_timeout"})
+        self.assertTrue(sock.closed)
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +392,9 @@ class _FakeCgiResponse:
         self._data = self._data[n:]
         return chunk
 
+    def read1(self, n: int = -1) -> bytes:
+        return self.read(n)
+
     def __enter__(self):
         return self
 
@@ -294,7 +412,11 @@ class CgiResponseLimitTests(unittest.TestCase):
         oversized = b"x" * (recording_query.MAX_CGI_RESPONSE_BYTES + 10)
         with patch.object(client.opener, "open", return_value=_FakeCgiResponse(oversized)):
             with self.assertRaises(ValueError):
-                client._get("/cgi-bin/mediaFileFind.cgi", [("action", "factory.create")])
+                client._get(
+                    "/cgi-bin/mediaFileFind.cgi",
+                    [("action", "factory.create")],
+                    time.monotonic() + 1,
+                )
 
     def test_found_greater_than_requested_count_raises(self) -> None:
         with self.assertRaises(ValueError):
@@ -317,7 +439,7 @@ class CgiResponseLimitTests(unittest.TestCase):
 
 
 def _make_get_with_destroy_failure(*, raise_network_error: bool):
-    def _get(path, params):
+    def _get(path, params, deadline):
         action = dict(params).get("action")
         if action == "factory.create":
             return "result=abc123secretobjectid"
@@ -332,6 +454,138 @@ def _make_get_with_destroy_failure(*, raise_network_error: bool):
         raise AssertionError(f"unexpected action {action}")
 
     return _get
+
+
+class RecordingOperationDeadlineTests(unittest.TestCase):
+    def _client(self) -> recording_query.DahuaRecordingClient:
+        nvr = recording_query.NvrHttpConfig(
+            host="127.0.0.1", http_port=1, username="a", password="b"
+        )
+        return recording_query.DahuaRecordingClient(nvr)
+
+    def test_all_query_stages_share_one_deadline(self) -> None:
+        client = self._client()
+        seen = []
+
+        def _get(_path, params, deadline):
+            seen.append((dict(params)["action"], deadline))
+            return {
+                "factory.create": "result=abc123",
+                "findFile": "OK",
+                "findNextFile": "found=0\n",
+                "destroy": "OK",
+            }[dict(params)["action"]]
+
+        with patch.object(recording_query.time, "monotonic", return_value=50.0), patch.object(
+            client, "_get", side_effect=_get
+        ):
+            result = client.query_channel(1)
+
+        self.assertTrue(result["recording_query_ok"])
+        self.assertEqual(
+            [action for action, _deadline in seen],
+            ["factory.create", "findFile", "findNextFile", "destroy"],
+        )
+        self.assertEqual(len({deadline for _action, deadline in seen}), 1)
+
+    def test_deadline_exhaustion_stops_pagination_and_skips_destroy(self) -> None:
+        client = self._client()
+        clock = [0.0]
+        actions = []
+        full_page = "found=100\n" + "".join(
+            f"items[{index}].StartTime=2026-08-01 00:00:00\n"
+            f"items[{index}].EndTime=2026-08-01 00:01:00\n"
+            for index in range(100)
+        )
+
+        def _get(_path, params, deadline):
+            action = dict(params)["action"]
+            actions.append(action)
+            if action == "factory.create":
+                return "result=abc123"
+            if action == "findFile":
+                return "OK"
+            if action == "findNextFile":
+                clock[0] = 11.0
+                return full_page
+            self.fail("destroy or another page must not be attempted after the deadline")
+
+        with patch.object(recording_query, "RECORDING_OPERATION_TIMEOUT", 10.0), patch.object(
+            recording_query.time, "monotonic", side_effect=lambda: clock[0]
+        ), patch.object(client, "_get", side_effect=_get):
+            result = client.query_channel(1)
+
+        self.assertEqual(actions, ["factory.create", "findFile", "findNextFile"])
+        self.assertFalse(result["recording_query_ok"])
+        self.assertIsNone(result["recording_recent"])
+        self.assertIsNone(result["last_recording"])
+        self.assertEqual(result["error_code"], "nvr_unreachable")
+
+    def test_destroy_http_timeout_is_limited_to_remaining_time(self) -> None:
+        client = self._client()
+        clock = [0.0]
+        open_timeouts = []
+
+        class _TimedResponse(_FakeCgiResponse):
+            def __init__(self, data: bytes, advance_to: float):
+                super().__init__(data)
+                self._advance_to = advance_to
+                self._advanced = False
+
+            def read1(self, n: int = -1) -> bytes:
+                if not self._advanced:
+                    clock[0] = self._advance_to
+                    self._advanced = True
+                return super().read1(n)
+
+        def _open(url, timeout):
+            open_timeouts.append((url, timeout))
+            if "factory.create" in url:
+                return _TimedResponse(b"result=abc123", 1.0)
+            if "findFile" in url and "findNextFile" not in url:
+                return _TimedResponse(b"OK", 2.0)
+            if "findNextFile" in url:
+                return _TimedResponse(b"found=0\n", 8.0)
+            if "destroy" in url:
+                return _TimedResponse(b"OK", 8.1)
+            self.fail("unexpected CGI action")
+
+        with patch.object(recording_query, "RECORDING_OPERATION_TIMEOUT", 10.0), patch.object(
+            recording_query.time, "monotonic", side_effect=lambda: clock[0]
+        ), patch.object(client.opener, "open", side_effect=_open):
+            result = client.query_channel(1)
+
+        self.assertTrue(result["recording_query_ok"])
+        destroy_timeout = next(timeout for url, timeout in open_timeouts if "destroy" in url)
+        self.assertGreater(destroy_timeout, 0)
+        self.assertLessEqual(destroy_timeout, 2.0)
+
+    def test_slow_trickle_read_cannot_cross_operation_deadline(self) -> None:
+        client = self._client()
+        clock = [0.0]
+
+        class _SlowTrickleResponse(_FakeCgiResponse):
+            def __init__(self):
+                super().__init__(b"")
+                self.read_calls = 0
+
+            def read1(self, _n: int = -1) -> bytes:
+                self.read_calls += 1
+                clock[0] += 0.4
+                return b"X"
+
+        response = _SlowTrickleResponse()
+        with patch.object(recording_query.time, "monotonic", side_effect=lambda: clock[0]), patch.object(
+            client.opener, "open", return_value=response
+        ):
+            with self.assertRaises(TimeoutError):
+                client._get(
+                    "/cgi-bin/mediaFileFind.cgi",
+                    [("action", "factory.create")],
+                    1.0,
+                )
+
+        self.assertLessEqual(response.read_calls, 3)
 
 
 class DestroyFailureTests(unittest.TestCase):

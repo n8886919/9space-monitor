@@ -168,6 +168,27 @@ class ChannelStoreTests(unittest.TestCase):
         state = store.snapshot(1)
         self.assertEqual(state["error_code"], "internal_error")
 
+    def test_recording_internal_error_clears_previous_last_recording(self) -> None:
+        store = ChannelStateStore()
+
+        async def run() -> None:
+            await store.update_recording(
+                1,
+                recording_query_ok=True,
+                recording_recent=True,
+                last_recording="2026-08-01T12:00:00+08:00",
+                checked_at_ms=1_000,
+                error_code=None,
+            )
+            await store.mark_recording_internal_error(1, checked_at_ms=2_000)
+
+        asyncio.run(run())
+        state = store.snapshot(1)
+        self.assertFalse(state["recording_query_ok"])
+        self.assertIsNone(state["recording_recent"])
+        self.assertIsNone(state["last_recording"])
+        self.assertEqual(state["error_code"], "internal_error")
+
 
 class LiveProbeUnitTests(unittest.TestCase):
     """live_probe.probe_channel() itself, without FastAPI, using a fake TCP

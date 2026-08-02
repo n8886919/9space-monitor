@@ -221,10 +221,11 @@ async def _shutdown():
     the outer task stops the *coroutine* from awaiting further channels or
     scheduling another round, but it cannot forcibly kill the underlying
     OS thread if one is already blocked inside a socket/HTTP call -- Python
-    has no API to do that safely. The bounded per-operation timeouts and
-    monotonic deadlines added elsewhere in this module (RTSP header/body,
-    CGI response size) keep any such in-flight thread's worst case
-    completion time finite, so it always returns on its own shortly after.
+    has no API to do that safely. The recording query and RTSP control
+    exchange therefore use complete monotonic operation deadlines to bound
+    their normal network work. Those bounds do not make the thread
+    force-cancellable, and lower-level DNS / OS socket behaviour may still
+    delay the underlying thread beyond the coroutine's cancellation.
     """
     global _live_task, _recording_task
     for task in (_live_task, _recording_task):

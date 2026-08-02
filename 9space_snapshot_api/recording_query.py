@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from urllib.error import HTTPError, URLError
@@ -37,6 +38,10 @@ _LOGGER = logging.getLogger(__name__)
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 
 HTTP_TIMEOUT = 8
+# One media-file search may require factory.create, findFile, up to 20
+# findNextFile pages, and a best-effort destroy. Bound the complete sequence
+# rather than allowing every HTTP operation its own full timeout.
+RECORDING_OPERATION_TIMEOUT = 30.0
 MAX_FILES = 2000
 RECENT_WINDOW_HOURS = 24
 MAX_CGI_RESPONSE_BYTES = 1 * 1024 * 1024
@@ -119,15 +124,57 @@ class DahuaRecordingClient:
         password_manager.add_password(None, self.base_url, nvr.username, nvr.password)
         self.opener = build_opener(HTTPDigestAuthHandler(password_manager))
 
-    def _get(self, path: str, params: list[tuple[str, str]]) -> str:
+    @staticmethod
+    def _remaining_timeout(deadline: float) -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("recording_operation_deadline_exceeded")
+        return min(HTTP_TIMEOUT, remaining)
+
+    @staticmethod
+    def _set_response_timeout(response, timeout: float) -> None:
+        """Shorten urllib's underlying socket timeout when available.
+
+        ``HTTPResponse.read1`` is used below so a slow trickle returns control
+        after each socket read. The attribute path is deliberately optional
+        because fake responses and alternate urllib handlers need not expose
+        the CPython HTTPResponse internals.
+        """
+        fp = getattr(response, "fp", None)
+        raw = getattr(fp, "raw", None)
+        response_socket = getattr(raw, "_sock", None)
+        if response_socket is not None:
+            response_socket.settimeout(timeout)
+
+    def _get(
+        self, path: str, params: list[tuple[str, str]], deadline: float
+    ) -> str:
         query = urlencode(params, quote_via=quote)
-        with self.opener.open(f"{self.base_url}{path}?{query}", timeout=HTTP_TIMEOUT) as response:
-            # Read at most MAX_CGI_RESPONSE_BYTES + 1 so we can detect an
-            # oversized response without ever buffering an unbounded body.
-            data = response.read(MAX_CGI_RESPONSE_BYTES + 1)
+        timeout = self._remaining_timeout(deadline)
+        with self.opener.open(
+            f"{self.base_url}{path}?{query}", timeout=timeout
+        ) as response:
+            # ``read1`` performs at most one underlying buffered read, unlike
+            # ``read(n)`` which may internally wait for all n bytes while a
+            # peer trickles data. Re-check and shorten the timeout before
+            # every read so the complete CGI operation cannot renew its
+            # timeout indefinitely.
+            read_chunk = getattr(response, "read1", response.read)
+            data = bytearray()
+            while len(data) <= MAX_CGI_RESPONSE_BYTES:
+                timeout = self._remaining_timeout(deadline)
+                self._set_response_timeout(response, timeout)
+                chunk = read_chunk(
+                    min(64 * 1024, MAX_CGI_RESPONSE_BYTES + 1 - len(data))
+                )
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("recording_operation_deadline_exceeded")
+                if not chunk:
+                    break
+                data.extend(chunk)
             if len(data) > MAX_CGI_RESPONSE_BYTES:
                 raise ValueError("cgi_response_too_large")
-            return data.decode("utf-8", errors="replace")
+            return bytes(data).decode("utf-8", errors="replace")
 
     def query_channel(self, channel_id: int) -> dict:
         """Query the last 24h of recordings for one NVR channel.
@@ -135,13 +182,18 @@ class DahuaRecordingClient:
         ``channel_id`` is the one-based Dahua NVR channel; channel 1 here
         always queries NVR channel 1 (no 0/1-based remapping).
         """
+        deadline = time.monotonic() + RECORDING_OPERATION_TIMEOUT
         now = datetime.now(LOCAL_TZ)
         start = now - timedelta(hours=RECENT_WINDOW_HOURS)
         object_id = ""
         stage = "factory_create"
         try:
             object_id = _parse_object_id(
-                self._get("/cgi-bin/mediaFileFind.cgi", [("action", "factory.create")])
+                self._get(
+                    "/cgi-bin/mediaFileFind.cgi",
+                    [("action", "factory.create")],
+                    deadline,
+                )
             )
             stage = "find_file"
             started = self._get(
@@ -154,17 +206,20 @@ class DahuaRecordingClient:
                     ("condition.EndTime", now.strftime("%Y-%m-%d %H:%M:%S")),
                     ("condition.Types[0]", "dav"),
                 ],
+                deadline,
             )
             if not started.lstrip().startswith("OK"):
                 raise ValueError("find_file_failed")
 
             files: list[dict[str, str]] = []
             while len(files) < MAX_FILES:
+                self._remaining_timeout(deadline)
                 stage = "find_next_file"
                 page = _parse_items(
                     self._get(
                         "/cgi-bin/mediaFileFind.cgi",
                         [("action", "findNextFile"), ("object", object_id), ("count", str(FIND_NEXT_FILE_COUNT))],
+                        deadline,
                     ),
                     FIND_NEXT_FILE_COUNT,
                 )
@@ -172,6 +227,7 @@ class DahuaRecordingClient:
                 if len(page) < FIND_NEXT_FILE_COUNT:
                     break
 
+            self._remaining_timeout(deadline)
             latest, recent = _latest_recent(files, start, now)
             return {
                 "recording_query_ok": True,
@@ -186,10 +242,12 @@ class DahuaRecordingClient:
         except (OSError, ValueError) as err:
             error_code = _classify_error(err, stage)
         finally:
-            if object_id:
+            if object_id and time.monotonic() < deadline:
                 try:
                     destroy_body = self._get(
-                        "/cgi-bin/mediaFileFind.cgi", [("action", "destroy"), ("object", object_id)]
+                        "/cgi-bin/mediaFileFind.cgi",
+                        [("action", "destroy"), ("object", object_id)],
+                        deadline,
                     )
                     # Best-effort confirmation only; never log the object
                     # handle, request URL, response body or exception text.

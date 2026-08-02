@@ -151,6 +151,7 @@ class ChannelStateStore:
             state = self._get_or_create(channel_id)
             state.recording_query_ok = False
             state.recording_recent = None
+            state.last_recording = None
             state.recording_checked_at_ms = checked_at_ms
             state.recording_error = error_code
 

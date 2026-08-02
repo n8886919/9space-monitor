@@ -28,11 +28,26 @@ from urllib.parse import urlsplit, urlunsplit
 
 CONNECT_TIMEOUT = 1.5
 RTSP_RESPONSE_TIMEOUT = 3.0
+# Covers TCP connect plus every DESCRIBE/SETUP/PLAY send/read, including an
+# authentication retry. RTP observation intentionally retains its separate
+# first-packet deadline and post-first-packet extension below.
+RTSP_OPERATION_TIMEOUT = 8.0
 RTP_FIRST_PACKET_TIMEOUT = 3.0
 RTP_AFTER_FIRST_PACKET_SECONDS = 2.0
 MAX_RTSP_MESSAGE_BYTES = 128 * 1024
 MAX_RTSP_BODY_BYTES = 256 * 1024
 MAX_INTERLEAVED_FRAME_BYTES = 2 * 1024 * 1024
+
+
+def _set_socket_timeout_for_deadline(
+    sock: socket.socket, deadline: float, limit: float
+) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("rtsp_operation_deadline_exceeded")
+    timeout = min(limit, remaining)
+    sock.settimeout(timeout)
+    return timeout
 
 
 @dataclass(frozen=True)
@@ -56,9 +71,10 @@ def _read_rtsp_response(
         deadline = time.monotonic() + RTSP_RESPONSE_TIMEOUT
     data = buffered
     while b"\r\n\r\n" not in data:
-        if time.monotonic() > deadline:
-            raise TimeoutError("rtsp_header_deadline_exceeded")
+        _set_socket_timeout_for_deadline(sock, deadline, RTSP_RESPONSE_TIMEOUT)
         chunk = sock.recv(4096)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("rtsp_operation_deadline_exceeded")
         if not chunk:
             raise ConnectionError("rtsp_connection_closed")
         data += chunk
@@ -79,9 +95,10 @@ def _read_rtsp_response(
     if content_length < 0 or content_length > MAX_RTSP_BODY_BYTES:
         raise ValueError("rtsp_body_too_large")
     while len(remainder) < content_length:
-        if time.monotonic() > deadline:
-            raise TimeoutError("rtsp_body_deadline_exceeded")
+        _set_socket_timeout_for_deadline(sock, deadline, RTSP_RESPONSE_TIMEOUT)
         chunk = sock.recv(min(4096, content_length - len(remainder)))
+        if time.monotonic() >= deadline:
+            raise TimeoutError("rtsp_operation_deadline_exceeded")
         if not chunk:
             raise ConnectionError("rtsp_body_truncated")
         remainder += chunk
@@ -120,9 +137,15 @@ def _send_request(
     authorization: str = "",
     extra_headers: dict[str, str] | None = None,
     buffered: bytes = b"",
+    deadline: float | None = None,
 ) -> tuple[int | None, dict[str, str], bytes, bytes]:
+    if deadline is None:
+        deadline = time.monotonic() + RTSP_RESPONSE_TIMEOUT
+    _set_socket_timeout_for_deadline(sock, deadline, RTSP_RESPONSE_TIMEOUT)
     sock.sendall(_encode_request(method, uri, cseq, authorization, extra_headers))
-    return _read_rtsp_response(sock, buffered)
+    if time.monotonic() >= deadline:
+        raise TimeoutError("rtsp_operation_deadline_exceeded")
+    return _read_rtsp_response(sock, buffered, deadline)
 
 
 def _parse_auth_challenge(header: str) -> tuple[str, dict[str, str]]:
@@ -196,19 +219,36 @@ def _send_authenticated(
     challenge: str,
     extra_headers: dict[str, str] | None = None,
     buffered: bytes = b"",
+    deadline: float | None = None,
 ) -> tuple[int | None, dict[str, str], bytes, bytes, int, str]:
+    if deadline is None:
+        deadline = time.monotonic() + RTSP_RESPONSE_TIMEOUT
     auth = (
         _authorization(challenge, username, password, method, uri) if challenge else ""
     )
     status, headers, body, extra = _send_request(
-        sock, method, uri, cseq, auth, extra_headers, buffered
+        sock,
+        method,
+        uri,
+        cseq,
+        auth,
+        extra_headers,
+        buffered,
+        deadline=deadline,
     )
     cseq += 1
     if status == 401 and (new_challenge := headers.get("www-authenticate")):
         challenge = new_challenge
         auth = _authorization(challenge, username, password, method, uri)
         status, headers, body, extra = _send_request(
-            sock, method, uri, cseq, auth, extra_headers, extra
+            sock,
+            method,
+            uri,
+            cseq,
+            auth,
+            extra_headers,
+            extra,
+            deadline=deadline,
         )
         cseq += 1
     return status, headers, body, extra, cseq, challenge
@@ -334,6 +374,7 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
     Returns ``{"live_video": bool, "error_code": str | None}`` only -- no
     credentials, RTSP URL or raw exception text.
     """
+    operation_deadline = time.monotonic() + RTSP_OPERATION_TIMEOUT
     uri = f"rtsp://{nvr.host}:{nvr.port}/cam/realmonitor?channel={channel_id}&subtype=1"
     sock: socket.socket | None = None
     session_id = ""
@@ -342,8 +383,13 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
     live_video = False
     error_code: str | None = None
     try:
-        sock = socket.create_connection((nvr.host, nvr.port), timeout=CONNECT_TIMEOUT)
-        sock.settimeout(RTSP_RESPONSE_TIMEOUT)
+        connect_timeout = min(
+            CONNECT_TIMEOUT,
+            max(0.0, operation_deadline - time.monotonic()),
+        )
+        if connect_timeout <= 0:
+            raise TimeoutError("rtsp_operation_deadline_exceeded")
+        sock = socket.create_connection((nvr.host, nvr.port), timeout=connect_timeout)
         status, headers, body, buffered, cseq, challenge = _send_authenticated(
             sock,
             "DESCRIBE",
@@ -353,6 +399,7 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
             nvr.password,
             challenge,
             {"Accept": "application/sdp"},
+            deadline=operation_deadline,
         )
         if status != 200:
             raise RuntimeError(f"describe_status_{status}")
@@ -371,6 +418,7 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
             challenge,
             {"Transport": "RTP/AVP/TCP;unicast;interleaved=0-1"},
             buffered,
+            deadline=operation_deadline,
         )
         if status != 200:
             raise RuntimeError(f"setup_status_{status}")
@@ -390,6 +438,7 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
             challenge,
             {"Session": session_id, "Range": "npt=0.000-"},
             buffered,
+            deadline=operation_deadline,
         )
         if status != 200:
             raise RuntimeError(f"play_status_{status}")
@@ -398,7 +447,7 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
         live_video = observed["live_video"]
         if not live_video:
             error_code = "no_video"
-    except socket.timeout:
+    except TimeoutError:
         error_code = _classify_error("timeout")
     except ConnectionRefusedError:
         error_code = _classify_error("refused")
@@ -408,11 +457,18 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
         if sock is not None:
             if session_id:
                 try:
-                    auth = _authorization(challenge, nvr.username, nvr.password, "TEARDOWN", uri)
-                    sock.sendall(
-                        _encode_request("TEARDOWN", uri, cseq, auth, {"Session": session_id})
+                    _set_socket_timeout_for_deadline(
+                        sock, operation_deadline, RTSP_RESPONSE_TIMEOUT
                     )
-                except (OSError, ValueError):
+                    auth = _authorization(
+                        challenge, nvr.username, nvr.password, "TEARDOWN", uri
+                    )
+                    sock.sendall(
+                        _encode_request(
+                            "TEARDOWN", uri, cseq, auth, {"Session": session_id}
+                        )
+                    )
+                except (OSError, TimeoutError, ValueError):
                     pass
             sock.close()
 
