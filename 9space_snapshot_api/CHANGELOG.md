@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1 - 2026-08-02
+
+### Added
+
+- Added background RTSP live-video probes and Dahua recording queries for the
+  `/api/v1/channels` state endpoints.
+- Added bounded operation deadlines, response-size limits, and redacted error
+  reporting for NVR operations.
+
+### Fixed
+
+- Included all M2B runtime modules in the add-on image.
+- Prevented RTCP packets from being counted as RTP video and mapped network
+  errors to stable API error codes.
+- Preserved the existing legacy snapshot endpoint response contract.
+
 ## 0.2.1 - 2026-07-18
 
 ### Changed
