@@ -42,7 +42,7 @@ export ADDON_REMOTE_DIR="/addons/${ADDON_DIR_NAME}"
 export INTEGRATION_DOMAIN="nvr_monitor"
 export INTEGRATION_REMOTE_DIR="/config/custom_components/${INTEGRATION_DOMAIN}"
 
-export ADDON_SLUG="9space_snapshot_addon"
+export ADDON_SLUG="<actual-supervisor-addon-slug>"
 export ADDON_HOSTNAME="afa94ae2-9space-snapshot-addon"
 export ADDON_HOST_PORT="8222"
 export ADDON_CONTAINER_PORT="8000"
@@ -52,6 +52,7 @@ export INTEGRATION_BASE_URL="http://${ADDON_HOSTNAME}:${ADDON_CONTAINER_PORT}"
 變數用途必須明確區分：
 
 - `ADDON_SLUG`：只供 `ha addons ...` 指令使用。
+- `ADDON_SLUG`：必須以 Supervisor 實際輸出為準；目前觀察到的 identifier 是 `afa94ae2_9space_snapshot_addon`。
 - `ADDON_HOSTNAME`：只供 Home Assistant Core 連到 add-on container。
 - `ADDON_HOST_PORT`：只供 host-side smoke test。
 - `ADDON_CONTAINER_PORT`：add-on container 內固定監聽 port，現值 `8000`。
@@ -91,6 +92,35 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 
 若輸出與預期不同，先停止並回報實際結果，再更新本次操作使用的 `ADDON_SLUG`。不要自行猜測。
 
+## M4 共用備份（所有路徑都必須先執行）
+
+無論是快速路徑、Generic Add-on Deployment、或後續 integration 部署，皆必須先完成備份並記錄 backup path。
+
+```bash
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+
+ssh -p "$HA_SSH_PORT" "$REMOTE" "
+  set -eu
+  BACKUP=/config/9space_backups/$STAMP
+  mkdir -p \"\$BACKUP\"
+
+  if [ -d '$INTEGRATION_REMOTE_DIR' ]; then
+    cp -a '$INTEGRATION_REMOTE_DIR' \"\$BACKUP/integration\"
+  fi
+
+  if [ -d '$ADDON_REMOTE_DIR' ]; then
+    cp -a '$ADDON_REMOTE_DIR' \"\$BACKUP/addon\"
+  fi
+
+  cp -a /config/.storage/core.config_entries \
+    \"\$BACKUP/core.config_entries\" 2>/dev/null || true
+
+  echo \"BACKUP=\$BACKUP\"
+"
+```
+
+記下輸出的 backup path。`/config/.storage/core.config_entries` 在 M4 只允許複製作備份，不得編輯、不得直接覆寫。
+
 ## M4 快速路徑（預設）
 
 目前 M4 預設不重新部署 add-on，因為 monorepo add-on `0.3.1` 已部署且 smoke test 通過。本輪主要部署 integration。
@@ -104,25 +134,48 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 host-side smoke test 範例：
 
 ```bash
-curl -fsS "http://127.0.0.1:${ADDON_HOST_PORT}/healthz"
+test "$ADDON_HOST_PORT" = "8222"
+test "$ADDON_HOST_PORT" != "8122"
+
+ssh -p "$HA_SSH_PORT" "$REMOTE" "
+  set -eu
+  test '$ADDON_HOST_PORT' = '8222'
+  test '$ADDON_HOST_PORT' != '8122'
+  curl -fsS 'http://127.0.0.1:$ADDON_HOST_PORT/healthz'
+"
 ```
 
 Legacy endpoint smoke test：
 
 ```bash
 CAMERA_ID=1
-curl -sS \
-  -o /tmp/legacy_snapshot_response.bin \
-  -w "%{http_code}\n" \
-  "http://127.0.0.1:${ADDON_HOST_PORT}/api/camera/${CAMERA_ID}"
-test -s /tmp/legacy_snapshot_response.bin
-rm -f /tmp/legacy_snapshot_response.bin
+test "$ADDON_HOST_PORT" = "8222"
+test "$ADDON_HOST_PORT" != "8122"
+
+ssh -p "$HA_SSH_PORT" "$REMOTE" "
+  set -eu
+  test '$ADDON_HOST_PORT' = '8222'
+  test '$ADDON_HOST_PORT' != '8122'
+  code=\$(curl -sS -o /tmp/legacy_snapshot_response.bin -w '%{http_code}' \
+    'http://127.0.0.1:$ADDON_HOST_PORT/api/camera/$CAMERA_ID')
+  test \"\$code\" = "200"
+  test -s /tmp/legacy_snapshot_response.bin
+  rm -f /tmp/legacy_snapshot_response.bin
+"
 ```
 
 Channels endpoint smoke test：
 
 ```bash
-curl -fsS "http://127.0.0.1:${ADDON_HOST_PORT}/api/v1/channels"
+test "$ADDON_HOST_PORT" = "8222"
+test "$ADDON_HOST_PORT" != "8122"
+
+ssh -p "$HA_SSH_PORT" "$REMOTE" "
+  set -eu
+  test '$ADDON_HOST_PORT' = '8222'
+  test '$ADDON_HOST_PORT' != '8122'
+  curl -fsS 'http://127.0.0.1:$ADDON_HOST_PORT/api/v1/channels'
+"
 ```
 
 若上述三項都正常：
@@ -130,7 +183,8 @@ curl -fsS "http://127.0.0.1:${ADDON_HOST_PORT}/api/v1/channels"
 1. 不上傳 add-on source。
 2. 不執行 `ha addons rebuild`。
 3. 不執行 `ha addons restart`。
-4. 直接進行 integration 部署。
+4. 確認已完成「M4 共用備份」且已有 backup path 紀錄。
+5. 直接進行 integration 部署。
 
 若任一項失敗：
 
@@ -141,34 +195,9 @@ curl -fsS "http://127.0.0.1:${ADDON_HOST_PORT}/api/v1/channels"
 
 以下步驟只在使用者明確授權 add-on 操作時使用。
 
-### 1. 建立遠端備份
+執行前先確認已完成「M4 共用備份」且已有 backup path 紀錄。
 
-```bash
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-
-ssh -p "$HA_SSH_PORT" "$REMOTE" "
-  set -eu
-  BACKUP=/config/9space_backups/$STAMP
-  mkdir -p \"\$BACKUP\"
-
-  if [ -d '$ADDON_REMOTE_DIR' ]; then
-    cp -a '$ADDON_REMOTE_DIR' \"\$BACKUP/addon\"
-  fi
-
-  if [ -d '$INTEGRATION_REMOTE_DIR' ]; then
-    cp -a '$INTEGRATION_REMOTE_DIR' \"\$BACKUP/integration\"
-  fi
-
-  cp -a /config/.storage/core.config_entries \
-    \"\$BACKUP/core.config_entries\" 2>/dev/null || true
-
-  echo \"BACKUP=\$BACKUP\"
-"
-```
-
-記下輸出的 backup path。
-
-### 2. 上傳 add-on source
+### 1. 上傳 add-on source
 
 使用 tar，避免直接在遠端逐檔修改：
 
@@ -198,7 +227,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 "
 ```
 
-### 3. Rebuild／restart add-on
+### 2. Rebuild／restart add-on
 
 先確認 `ADDON_SLUG`，再執行：
 
@@ -212,30 +241,47 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 若目前 HA CLI 不支援 `rebuild`，不要猜替代命令；回報實際 `ha addons --help` 輸出，再決定。
 
-### 4. Add-on smoke test
+### 3. Add-on smoke test
 
 Generic add-on deployment 完成後，只驗證 monorepo add-on host port，不得碰 `8122`：
 
 ```bash
-curl -fsS "http://127.0.0.1:${ADDON_HOST_PORT}/healthz"
-curl -fsS "http://127.0.0.1:${ADDON_HOST_PORT}/api/v1/channels"
+test "$ADDON_HOST_PORT" = "8222"
+test "$ADDON_HOST_PORT" != "8122"
+
+ssh -p "$HA_SSH_PORT" "$REMOTE" "
+  set -eu
+  test '$ADDON_HOST_PORT' = '8222'
+  test '$ADDON_HOST_PORT' != '8122'
+  curl -fsS 'http://127.0.0.1:$ADDON_HOST_PORT/healthz'
+  curl -fsS 'http://127.0.0.1:$ADDON_HOST_PORT/api/v1/channels'
+"
 ```
 
 確認 legacy endpoint：
 
 ```bash
 CAMERA_ID=1
-curl -sS \
-  -o /tmp/legacy_snapshot_response.bin \
-  -w "%{http_code}\n" \
-  "http://127.0.0.1:${ADDON_HOST_PORT}/api/camera/${CAMERA_ID}"
-test -s /tmp/legacy_snapshot_response.bin
-rm -f /tmp/legacy_snapshot_response.bin
+test "$ADDON_HOST_PORT" = "8222"
+test "$ADDON_HOST_PORT" != "8122"
+
+ssh -p "$HA_SSH_PORT" "$REMOTE" "
+  set -eu
+  test '$ADDON_HOST_PORT' = '8222'
+  test '$ADDON_HOST_PORT' != '8122'
+  code=\$(curl -sS -o /tmp/legacy_snapshot_response.bin -w '%{http_code}' \
+    'http://127.0.0.1:$ADDON_HOST_PORT/api/camera/$CAMERA_ID')
+  test \"\$code\" = "200"
+  test -s /tmp/legacy_snapshot_response.bin
+  rm -f /tmp/legacy_snapshot_response.bin
+"
 ```
 
 ## Integration 部署
 
 只在 add-on 新 API 與 integration client 都已在本機測試後執行。
+
+執行前先確認已完成「M4 共用備份」且已有 backup path 紀錄。
 
 ### 1. 上傳 integration
 
