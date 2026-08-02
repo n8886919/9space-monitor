@@ -163,14 +163,14 @@ Home Assistant
 
 ### M3：Integration 改用 add-on
 
-- [ ] 建立簡單 async local API client。
-- [ ] Integration config flow 改為設定 add-on base URL。
-- [ ] Integration 不再要求或保存 NVR credentials。
-- [ ] 移除 integration 內 NVR RTSP、Dahua HTTP recording client。
-- [ ] 移除自製 Ping coordinator 與 `icmplib` dependency。
-- [ ] 保留仍有必要的攝影機區域網路 service probe；不要在同一階段重寫。
-- [ ] Entities 名稱及 unique ID 儘量保持不變，降低 Dashboard 破壞。
-- [ ] Add-on unavailable 時，相關 entities 應變成 unavailable，不阻塞 HA event loop。
+- [x] 建立簡單 async local API client。
+- [x] Integration config flow 改為設定 add-on base URL。
+- [x] Integration 不再要求或保存 NVR credentials。
+- [x] 移除 integration 內 NVR RTSP、Dahua HTTP recording client。
+- [x] 移除自製 Ping coordinator 與 `icmplib` dependency。
+- [x] 保留仍有必要的攝影機區域網路 service probe；不要在同一階段重寫。
+- [x] Entities 名稱及 unique ID 儘量保持不變，降低 Dashboard 破壞。
+- [x] Add-on unavailable 時，相關 entities 應變成 unavailable，不阻塞 HA event loop。
 
 ### M4：手動部署與實機 smoke test
 
