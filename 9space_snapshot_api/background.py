@@ -29,17 +29,26 @@ _LOGGER = logging.getLogger(__name__)
 LIVE_PROBE_INTERVAL_SECONDS = 300
 RECORDING_QUERY_INTERVAL_SECONDS = 900
 
+# First real-hardware release: live-video probing and recording queries
+# share a single background concurrency slot (total background NVR
+# operations = 1 at a time), independent of the snapshot ffmpeg
+# ``max_concurrency`` option. Callers create one ``asyncio.Semaphore`` with
+# this value and pass the same instance to both loops below.
+BACKGROUND_CONCURRENCY = 1
+
 
 async def _bounded_gather(
     channel_ids: Iterable[int],
     worker: Callable[[int], Awaitable[None]],
-    max_concurrency: int,
+    semaphore: asyncio.Semaphore,
+    on_error: Optional[Callable[[int], Awaitable[None]]] = None,
 ) -> None:
-    """Run ``worker(channel_id)`` for every channel, bounded by a semaphore
-    so at most ``max_concurrency`` channels are probed at once. One
-    channel's exception never stops the others or this round; only a
-    short, credential-free warning (exception type name) is logged."""
-    semaphore = asyncio.Semaphore(max(1, max_concurrency))
+    """Run ``worker(channel_id)`` for every channel, bounded by the shared
+    ``semaphore`` so at most one background NVR operation (live probe or
+    recording query, across both loops) runs at a time. One channel's
+    exception never stops the others or this round; only a short,
+    credential-free warning (exception type name, no message) is logged,
+    and ``on_error`` (if given) records a safe, non-stale channel state."""
 
     async def _run_one(channel_id: int) -> None:
         async with semaphore:
@@ -51,6 +60,14 @@ async def _bounded_gather(
                     channel_id,
                     type(err).__name__,
                 )
+                if on_error is not None:
+                    try:
+                        await on_error(channel_id)
+                    except Exception:  # noqa: BLE001 - state update must not abort the round
+                        _LOGGER.warning(
+                            "background probe error-state update failed for channel %s",
+                            channel_id,
+                        )
 
     await asyncio.gather(*(_run_one(cid) for cid in channel_ids))
 
@@ -85,19 +102,18 @@ def _channel_count(opts: dict) -> int:
     return int(opts.get("channel_count") or 14)
 
 
-def _max_concurrency(opts: dict) -> int:
-    return int(opts.get("max_concurrency") or 2)
-
-
 async def live_probe_loop(
     store: ChannelStateStore,
     get_options: Callable[[], dict],
+    semaphore: asyncio.Semaphore,
     interval_seconds: int = LIVE_PROBE_INTERVAL_SECONDS,
     ready_event: Optional[threading.Event] = None,
 ) -> None:
     """Run the live-video probe for every channel, forever. The first round
-    runs immediately (no initial sleep). ``ready_event`` (if given) is set
-    once the first round finishes, so tests can wait for it deterministically.
+    runs immediately (no initial sleep). ``semaphore`` must be the same
+    instance passed to ``recording_query_loop`` so both loops share one
+    background concurrency budget. ``ready_event`` (if given) is set once
+    the first round finishes, so tests can wait for it deterministically.
     Must be cancelled and awaited on shutdown."""
     first = True
     while True:
@@ -108,10 +124,17 @@ async def live_probe_loop(
             username=str(opts.get("username") or "admin"),
             password=str(opts.get("password") or ""),
         )
+
+        async def _on_error(channel_id: int) -> None:
+            await store.mark_live_internal_error(
+                channel_id, checked_at_ms=int(time.time() * 1000)
+            )
+
         await _bounded_gather(
             range(1, _channel_count(opts) + 1),
             lambda cid: _live_probe_one(cid, nvr, store),
-            _max_concurrency(opts),
+            semaphore,
+            on_error=_on_error,
         )
         if first and ready_event is not None:
             ready_event.set()
@@ -122,12 +145,15 @@ async def live_probe_loop(
 async def recording_query_loop(
     store: ChannelStateStore,
     get_options: Callable[[], dict],
+    semaphore: asyncio.Semaphore,
     interval_seconds: int = RECORDING_QUERY_INTERVAL_SECONDS,
     ready_event: Optional[threading.Event] = None,
 ) -> None:
     """Run the recording query for every channel, forever. The first round
-    runs immediately (no initial sleep). ``ready_event`` (if given) is set
-    once the first round finishes, so tests can wait for it deterministically.
+    runs immediately (no initial sleep). ``semaphore`` must be the same
+    instance passed to ``live_probe_loop`` so both loops share one
+    background concurrency budget. ``ready_event`` (if given) is set once
+    the first round finishes, so tests can wait for it deterministically.
     Must be cancelled and awaited on shutdown."""
     first = True
     while True:
@@ -138,10 +164,17 @@ async def recording_query_loop(
             username=str(opts.get("username") or "admin"),
             password=str(opts.get("password") or ""),
         )
+
+        async def _on_error(channel_id: int) -> None:
+            await store.mark_recording_internal_error(
+                channel_id, checked_at_ms=int(time.time() * 1000)
+            )
+
         await _bounded_gather(
             range(1, _channel_count(opts) + 1),
             lambda cid: _recording_query_one(cid, nvr, store),
-            _max_concurrency(opts),
+            semaphore,
+            on_error=_on_error,
         )
         if first and ready_event is not None:
             ready_event.set()

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import threading
 import time
@@ -13,6 +14,8 @@ from fastapi.responses import JSONResponse
 import background
 from channel_state import ChannelStateStore
 
+_LOGGER = logging.getLogger(__name__)
+
 app = FastAPI(title="Dahua RTSP Snapshot API")
 
 OPTIONS_PATH = "/data/options.json"
@@ -21,6 +24,12 @@ OPTIONS_PATH = "/data/options.json"
 QUEUE_TIMEOUT_MS = 300
 
 _sem: Optional[asyncio.Semaphore] = None
+
+# M2B review fix: live-video probing and recording queries share one
+# background concurrency slot (background.BACKGROUND_CONCURRENCY), separate
+# from the snapshot ffmpeg semaphore (_sem) above, which still uses the
+# existing max_concurrency option.
+_background_sem: Optional[asyncio.Semaphore] = None
 
 # M2B: in-memory per-channel state written only by the background probe
 # loops below; API handlers only ever read it (never trigger NVR I/O).
@@ -68,6 +77,31 @@ def _build_rtsp_url(opts: dict, camera_id: str) -> str:
     return f"rtsp://{user}:{pwd}@{host}:{port}/cam/realmonitor?channel={camera_id}&subtype={subtype}"
 
 
+def _classify_ffmpeg_failure(stderr_text: str) -> str:
+    """Map raw ffmpeg stderr to one of a small, fixed set of safe detail
+    values. Never return the raw stderr text itself: ffmpeg's own error
+    messages frequently echo back the full input URL, including the RTSP
+    username and password (e.g. "Unauthorized: rtsp://user:pass@host/..."),
+    which must never reach the legacy API response or any log line."""
+    text = stderr_text.lower()
+    if "401" in text or "unauthorized" in text or "authoriz" in text:
+        return "authentication_failed"
+    if "timed out" in text or "timeout" in text:
+        return "timeout"
+    if (
+        "connection refused" in text
+        or "no route to host" in text
+        or "network is unreachable" in text
+        or "could not connect" in text
+        or "immediate exit requested" in text
+        or "end of file" in text
+        or "server returned 4" in text
+        or "server returned 5" in text
+    ):
+        return "connection_failed"
+    return "capture_failed"
+
+
 async def _ffmpeg_grab_jpeg(
     rtsp_url: str, timeout_ms: int, jpeg_qv: int
 ) -> Tuple[bool, int, Optional[bytes], str]:
@@ -105,7 +139,7 @@ async def _ffmpeg_grab_jpeg(
             proc.kill()
             await proc.communicate()
             latency = int((time.perf_counter() - t0) * 1000)
-            return False, latency, None, "timeout(wait_for)"
+            return False, latency, None, "timeout"
 
         latency = int((time.perf_counter() - t0) * 1000)
 
@@ -118,24 +152,25 @@ async def _ffmpeg_grab_jpeg(
                     jpeg = f.read()
                 return True, latency, jpeg, "decoded 1 frame"
             except Exception:
-                return False, latency, None, "read_tmp_failed"
+                return False, latency, None, "capture_failed"
             finally:
                 try:
                     os.remove(out_path)
                 except Exception:
                     pass
 
-        err = (stderr or b"").decode("utf-8", errors="ignore").strip()
-        if err:
-            err = err.splitlines()[-1][:200]
-        else:
-            err = f"ffmpeg exit code {proc.returncode}"
+        # stderr may contain the full RTSP URL (with credentials) -- it is
+        # only ever used locally to pick a fixed, safe detail value below.
+        # It must never be included in the response or logged verbatim.
+        raw_err = (stderr or b"").decode("utf-8", errors="ignore")
+        detail = _classify_ffmpeg_failure(raw_err)
+        _LOGGER.debug("ffmpeg capture failed: %s", detail)
         # cleanup
         try:
             os.remove(out_path)
         except Exception:
             pass
-        return False, latency, None, err
+        return False, latency, None, detail
 
     except Exception:
         latency = int((time.perf_counter() - t0) * 1000)
@@ -148,27 +183,49 @@ async def _ffmpeg_grab_jpeg(
 
 @app.on_event("startup")
 async def _startup():
-    global _sem, _live_task, _recording_task
+    global _sem, _background_sem, _live_task, _recording_task
     opts = _load_options()
     max_conc = int(_opt(opts, "max_concurrency", 2))
     _sem = asyncio.Semaphore(max(1, max_conc))
+    # Live-video probing and recording queries share this single semaphore
+    # (fixed background.BACKGROUND_CONCURRENCY, not the max_concurrency
+    # option) so total background NVR operations never exceed 1 at a time.
+    _background_sem = asyncio.Semaphore(background.BACKGROUND_CONCURRENCY)
 
     _live_first_round_ready.clear()
     _recording_first_round_ready.clear()
     _live_task = asyncio.create_task(
         background.live_probe_loop(
-            _channel_store, _load_options, ready_event=_live_first_round_ready
+            _channel_store,
+            _load_options,
+            _background_sem,
+            ready_event=_live_first_round_ready,
         )
     )
     _recording_task = asyncio.create_task(
         background.recording_query_loop(
-            _channel_store, _load_options, ready_event=_recording_first_round_ready
+            _channel_store,
+            _load_options,
+            _background_sem,
+            ready_event=_recording_first_round_ready,
         )
     )
 
 
 @app.on_event("shutdown")
 async def _shutdown():
+    """Stop scheduling new background work and cancel both loops.
+
+    ``live_probe.probe_channel`` / ``recording_query.query_channel`` run
+    inside ``asyncio.to_thread`` (plain blocking sockets/urllib). Cancelling
+    the outer task stops the *coroutine* from awaiting further channels or
+    scheduling another round, but it cannot forcibly kill the underlying
+    OS thread if one is already blocked inside a socket/HTTP call -- Python
+    has no API to do that safely. The bounded per-operation timeouts and
+    monotonic deadlines added elsewhere in this module (RTSP header/body,
+    CGI response size) keep any such in-flight thread's worst case
+    completion time finite, so it always returns on its own shortly after.
+    """
     global _live_task, _recording_task
     for task in (_live_task, _recording_task):
         if task is not None:

@@ -17,6 +17,19 @@ def _iso(ts_ms: int) -> str:
     return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat()
 
 
+# Fixed error-code priority (highest first). A higher-priority code must
+# never be shadowed by a lower-priority one; codes not in this list (should
+# not normally happen) are treated as lowest priority.
+_ERROR_PRIORITY = [
+    "authentication_failed",
+    "internal_error",
+    "recording_query_failed",
+    "nvr_unreachable",
+    "rtsp_timeout",
+    "no_video",
+]
+
+
 @dataclass
 class ChannelState:
     channel_id: int
@@ -37,9 +50,27 @@ class ChannelState:
         return max(candidates) if candidates else None
 
     def _error_code(self) -> Optional[str]:
-        # Live-video probe errors take priority since they run more often
-        # (every 300s vs 900s) and are usually the more actionable signal.
-        return self.live_error or self.recording_error
+        # Explicit fixed priority (see ``_ERROR_PRIORITY``): a higher
+        # priority error must never be shadowed by a lower priority one.
+        # Same priority -> the source with the newer timestamp wins.
+        candidates = []
+        if self.live_error:
+            candidates.append((self.live_error, self.live_checked_at_ms or -1))
+        if self.recording_error:
+            candidates.append((self.recording_error, self.recording_checked_at_ms or -1))
+        if not candidates:
+            return None
+
+        def _rank(code: str) -> int:
+            try:
+                return _ERROR_PRIORITY.index(code)
+            except ValueError:
+                return len(_ERROR_PRIORITY)
+
+        best_rank = min(_rank(code) for code, _ts in candidates)
+        top = [item for item in candidates if _rank(item[0]) == best_rank]
+        top.sort(key=lambda item: item[1], reverse=True)
+        return top[0][0]
 
     def as_dict(self) -> dict:
         checked_ms = self._checked_at_ms()
@@ -96,6 +127,30 @@ class ChannelStateStore:
             state.recording_query_ok = recording_query_ok
             state.recording_recent = recording_recent
             state.last_recording = last_recording
+            state.recording_checked_at_ms = checked_at_ms
+            state.recording_error = error_code
+
+    async def mark_live_internal_error(
+        self, channel_id: int, *, checked_at_ms: int, error_code: str = "internal_error"
+    ) -> None:
+        """Record an unexpected (non-probe) exception in the live-video
+        worker. Must never leave a stale ``live_video=True`` in place."""
+        async with self._lock:
+            state = self._get_or_create(channel_id)
+            state.live_video = False
+            state.live_checked_at_ms = checked_at_ms
+            state.live_error = error_code
+
+    async def mark_recording_internal_error(
+        self, channel_id: int, *, checked_at_ms: int, error_code: str = "internal_error"
+    ) -> None:
+        """Record an unexpected (non-query) exception in the recording
+        worker. Must never leave a stale ``recording_query_ok=True`` or
+        ``recording_recent=True`` in place."""
+        async with self._lock:
+            state = self._get_or_create(channel_id)
+            state.recording_query_ok = False
+            state.recording_recent = None
             state.recording_checked_at_ms = checked_at_ms
             state.recording_error = error_code
 

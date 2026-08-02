@@ -31,6 +31,7 @@ RTSP_RESPONSE_TIMEOUT = 3.0
 RTP_FIRST_PACKET_TIMEOUT = 3.0
 RTP_AFTER_FIRST_PACKET_SECONDS = 2.0
 MAX_RTSP_MESSAGE_BYTES = 128 * 1024
+MAX_RTSP_BODY_BYTES = 256 * 1024
 MAX_INTERLEAVED_FRAME_BYTES = 2 * 1024 * 1024
 
 
@@ -45,10 +46,18 @@ class NvrConfig:
 
 
 def _read_rtsp_response(
-    sock: socket.socket, buffered: bytes = b""
+    sock: socket.socket, buffered: bytes = b"", deadline: float | None = None
 ) -> tuple[int | None, dict[str, str], bytes, bytes]:
+    # A single monotonic deadline for the whole header+body read, not just
+    # each individual recv() timeout: a slow peer trickling a few bytes at
+    # a time could otherwise keep resetting the per-recv timeout and stall
+    # this exchange indefinitely.
+    if deadline is None:
+        deadline = time.monotonic() + RTSP_RESPONSE_TIMEOUT
     data = buffered
     while b"\r\n\r\n" not in data:
+        if time.monotonic() > deadline:
+            raise TimeoutError("rtsp_header_deadline_exceeded")
         chunk = sock.recv(4096)
         if not chunk:
             raise ConnectionError("rtsp_connection_closed")
@@ -67,7 +76,11 @@ def _read_rtsp_response(
             headers[key.strip().lower()] = value.strip()
 
     content_length = int(headers.get("content-length", "0") or "0")
+    if content_length < 0 or content_length > MAX_RTSP_BODY_BYTES:
+        raise ValueError("rtsp_body_too_large")
     while len(remainder) < content_length:
+        if time.monotonic() > deadline:
+            raise TimeoutError("rtsp_body_deadline_exceeded")
         chunk = sock.recv(min(4096, content_length - len(remainder)))
         if not chunk:
             raise ConnectionError("rtsp_body_truncated")
@@ -236,6 +249,7 @@ def _observe_rtp(sock: socket.socket, buffered: bytes, video_channel: int) -> di
     data = bytearray(buffered)
     packets = 0
     timestamps: set[int] = set()
+    first_packet_seen = False
 
     while time.perf_counter() < deadline:
         while len(data) < 4 and time.perf_counter() < deadline:
@@ -279,6 +293,14 @@ def _observe_rtp(sock: socket.socket, buffered: bytes, video_channel: int) -> di
             continue
         packets += 1
         timestamps.add(int.from_bytes(payload[4:8], "big"))
+        # As soon as the first valid RTP packet arrives, extend the
+        # deadline (never shorten it) so a second, later packet with a
+        # different timestamp still has time to arrive -- matching the
+        # integration's original behaviour this probe was ported from.
+        if not first_packet_seen:
+            first_packet_seen = True
+            first_at = time.perf_counter()
+            deadline = max(deadline, first_at + RTP_AFTER_FIRST_PACKET_SECONDS)
         if packets >= 2 and len(timestamps) >= 2:
             break
 
@@ -294,8 +316,10 @@ def _classify_error(exc_or_reason: str) -> str:
     reason = exc_or_reason.lower()
     if "401" in reason or "auth" in reason:
         return "authentication_failed"
-    if "timeout" in reason:
+    if "deadline" in reason or "timeout" in reason:
         return "rtsp_timeout"
+    if "too_large" in reason:
+        return "internal_error"
     if "refused" in reason or "oserror" in reason or "connection" in reason:
         return "nvr_unreachable"
     if "no_video" in reason or "sdp_has_no_video" in reason or "rtp_video_timeout" in reason:

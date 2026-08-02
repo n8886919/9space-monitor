@@ -14,7 +14,10 @@ Run locally with:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -22,6 +25,7 @@ from unittest.mock import patch
 ADDON_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ADDON_DIR))
 
+import background  # noqa: E402
 import live_probe  # noqa: E402
 import main  # noqa: E402
 import recording_query  # noqa: E402
@@ -95,7 +99,11 @@ class ChannelStoreTests(unittest.TestCase):
         expected = datetime.fromtimestamp(5.0, tz=timezone.utc).isoformat()
         self.assertEqual(state["checked_at"], expected)
 
-    def test_live_error_takes_priority_over_recording_error(self) -> None:
+    def test_higher_priority_error_code_wins_regardless_of_source(self) -> None:
+        # Fixed priority list (see channel_state._ERROR_PRIORITY):
+        # nvr_unreachable outranks rtsp_timeout, even though it comes from
+        # the less-frequently-run recording query and has a newer timestamp
+        # here than the live probe's rtsp_timeout.
         store = ChannelStateStore()
 
         async def run() -> None:
@@ -113,7 +121,52 @@ class ChannelStoreTests(unittest.TestCase):
 
         asyncio.run(run())
         state = store.snapshot(1)
-        self.assertEqual(state["error_code"], "rtsp_timeout")
+        self.assertEqual(state["error_code"], "nvr_unreachable")
+
+    def test_authentication_failed_wins_over_no_video_regardless_of_timestamp(
+        self,
+    ) -> None:
+        # Recording auth failure + live no_video at the same time: result
+        # must always be authentication_failed (highest priority), even if
+        # no_video's timestamp is newer.
+        store = ChannelStateStore()
+
+        async def run() -> None:
+            await store.update_live(
+                1, live_video=False, checked_at_ms=9_000, error_code="no_video"
+            )
+            await store.update_recording(
+                1,
+                recording_query_ok=False,
+                recording_recent=None,
+                last_recording=None,
+                checked_at_ms=1_000,
+                error_code="authentication_failed",
+            )
+
+        asyncio.run(run())
+        state = store.snapshot(1)
+        self.assertEqual(state["error_code"], "authentication_failed")
+
+    def test_same_priority_ties_break_on_newer_timestamp(self) -> None:
+        store = ChannelStateStore()
+
+        async def run() -> None:
+            await store.update_live(
+                1, live_video=False, checked_at_ms=1_000, error_code="internal_error"
+            )
+            await store.update_recording(
+                1,
+                recording_query_ok=False,
+                recording_recent=None,
+                last_recording=None,
+                checked_at_ms=5_000,
+                error_code="internal_error",
+            )
+
+        asyncio.run(run())
+        state = store.snapshot(1)
+        self.assertEqual(state["error_code"], "internal_error")
 
 
 class LiveProbeUnitTests(unittest.TestCase):
@@ -169,6 +222,173 @@ def _fake_recording_failure(channel_id, nvr):
         "last_recording": None,
         "error_code": "recording_query_failed",
     }
+
+
+class UnexpectedExceptionStateTests(unittest.TestCase):
+    """M2B review fix 4: an unexpected (non-classified) exception from a
+    background worker must positively overwrite the channel state instead
+    of just logging and leaving a stale/unknown value in place."""
+
+    def test_live_worker_first_time_unexpected_exception_sets_error_state(self) -> None:
+        store = ChannelStateStore()
+        ready = threading.Event()
+        opts = dict(FAKE_OPTS, channel_count=1)
+
+        def _raise(channel_id, nvr):
+            raise RuntimeError("boom")
+
+        async def run():
+            sem = asyncio.Semaphore(1)
+            with patch.object(live_probe, "probe_channel", side_effect=_raise):
+                task = asyncio.create_task(
+                    background.live_probe_loop(store, lambda: opts, sem, ready_event=ready)
+                )
+                while not ready.is_set():
+                    await asyncio.sleep(0.005)
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(run())
+        state = store.snapshot(1)
+        self.assertFalse(state["live_video"])
+        self.assertEqual(state["error_code"], "internal_error")
+        self.assertIsNotNone(state["checked_at"])
+
+    def test_recording_worker_first_time_unexpected_exception_sets_error_state(self) -> None:
+        store = ChannelStateStore()
+        ready = threading.Event()
+        opts = dict(FAKE_OPTS, channel_count=1)
+
+        def _raise(channel_id, nvr):
+            raise RuntimeError("boom")
+
+        async def run():
+            sem = asyncio.Semaphore(1)
+            with patch.object(recording_query, "query_channel", side_effect=_raise):
+                task = asyncio.create_task(
+                    background.recording_query_loop(store, lambda: opts, sem, ready_event=ready)
+                )
+                while not ready.is_set():
+                    await asyncio.sleep(0.005)
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(run())
+        state = store.snapshot(1)
+        self.assertFalse(state["recording_query_ok"])
+        self.assertIsNone(state["recording_recent"])
+        self.assertEqual(state["error_code"], "internal_error")
+        self.assertIsNotNone(state["checked_at"])
+
+    def test_live_previous_success_then_unexpected_failure_replaces_state(self) -> None:
+        store = ChannelStateStore()
+        ready = threading.Event()
+        opts = dict(FAKE_OPTS, channel_count=1)
+        calls = {"n": 0}
+
+        def _flaky(channel_id, nvr):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"live_video": True, "error_code": None}
+            raise RuntimeError("boom")
+
+        async def run():
+            sem = asyncio.Semaphore(1)
+            with patch.object(live_probe, "probe_channel", side_effect=_flaky):
+                task = asyncio.create_task(
+                    background.live_probe_loop(
+                        store, lambda: opts, sem, interval_seconds=0.01, ready_event=ready
+                    )
+                )
+                while not ready.is_set():
+                    await asyncio.sleep(0.005)
+                # First round must have reported success before the failure.
+                first_state = store.snapshot(1)
+                assert first_state["live_video"] is True
+                deadline = time.monotonic() + 3
+                while calls["n"] < 2 and time.monotonic() < deadline:
+                    await asyncio.sleep(0.01)
+                await asyncio.sleep(0.05)
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            return store.snapshot(1)
+
+        final_state = asyncio.run(run())
+        self.assertGreaterEqual(calls["n"], 2)
+        # The stale success from round 1 must not survive round 2's crash.
+        self.assertFalse(final_state["live_video"])
+        self.assertEqual(final_state["error_code"], "internal_error")
+
+
+class SharedBackgroundConcurrencyTests(unittest.TestCase):
+    """M2B review fix 3: live-video probing and recording queries must
+    share one background concurrency slot (max 1 concurrent NVR op)."""
+
+    def test_live_and_recording_loops_never_run_concurrently(self) -> None:
+        store = ChannelStateStore()
+        live_ready = threading.Event()
+        recording_ready = threading.Event()
+        opts = dict(FAKE_OPTS, channel_count=1)
+
+        state_lock = threading.Lock()
+        active = 0
+        max_active = 0
+
+        def _blocking(channel_id, nvr, result):
+            nonlocal active, max_active
+            with state_lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with state_lock:
+                active -= 1
+            return result
+
+        def _fake_live(channel_id, nvr):
+            return _blocking(
+                channel_id, nvr, {"live_video": True, "error_code": None}
+            )
+
+        def _fake_recording(channel_id, nvr):
+            return _blocking(
+                channel_id,
+                nvr,
+                {
+                    "recording_query_ok": True,
+                    "recording_recent": True,
+                    "last_recording": None,
+                    "error_code": None,
+                },
+            )
+
+        async def run():
+            sem = asyncio.Semaphore(background.BACKGROUND_CONCURRENCY)
+            with patch.object(live_probe, "probe_channel", side_effect=_fake_live), patch.object(
+                recording_query, "query_channel", side_effect=_fake_recording
+            ):
+                live_task = asyncio.create_task(
+                    background.live_probe_loop(
+                        store, lambda: opts, sem, ready_event=live_ready
+                    )
+                )
+                recording_task = asyncio.create_task(
+                    background.recording_query_loop(
+                        store, lambda: opts, sem, ready_event=recording_ready
+                    )
+                )
+                while not (live_ready.is_set() and recording_ready.is_set()):
+                    await asyncio.sleep(0.005)
+                for task in (live_task, recording_task):
+                    task.cancel()
+                for task in (live_task, recording_task):
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+
+        asyncio.run(run())
+        self.assertEqual(max_active, 1)
 
 
 class BackgroundProbeApiTests(unittest.TestCase):
@@ -270,9 +490,14 @@ class BackgroundProbeApiTests(unittest.TestCase):
         ok_channel = client.get("/api/v1/channels/1").json()
         failed_channel = client.get("/api/v1/channels/2").json()
         self.assertTrue(ok_channel["live_video"])
-        # Channel 2's worker raised; background.py swallows it and leaves
-        # that channel's state at its (still-unknown) default.
-        self.assertIsNone(failed_channel["live_video"])
+        # Channel 2's worker raised; background.py must not just log and
+        # leave the previous/unknown state in place -- it must positively
+        # mark the channel as not live with a safe internal_error code, so
+        # a stale/unknown state can never be misread as "still fine".
+        self.assertFalse(failed_channel["live_video"])
+        self.assertEqual(failed_channel["error_code"], "internal_error")
+        self.assertIsNotNone(failed_channel["checked_at"])
+
 
     # 10: credentials, full RTSP URL and CGI body never appear in the API
     # response, for any channel, in any of the fake scenarios above.

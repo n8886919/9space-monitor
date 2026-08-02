@@ -15,6 +15,7 @@ Same query/auth/coverage algorithm as the integration used (per AGENTS.md:
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -27,6 +28,8 @@ from urllib.request import (
 )
 from zoneinfo import ZoneInfo
 
+_LOGGER = logging.getLogger(__name__)
+
 # The Dahua CGI's StartTime/EndTime fields are naive timestamps in the NVR's
 # own local time, not UTC. This must match the integration's original
 # assumption (custom_components/nvr_monitor/recording.py LOCAL_TZ) so the
@@ -36,6 +39,8 @@ LOCAL_TZ = ZoneInfo("Asia/Taipei")
 HTTP_TIMEOUT = 8
 MAX_FILES = 2000
 RECENT_WINDOW_HOURS = 24
+MAX_CGI_RESPONSE_BYTES = 1 * 1024 * 1024
+FIND_NEXT_FILE_COUNT = 100
 
 
 @dataclass(frozen=True)
@@ -55,11 +60,16 @@ def _parse_object_id(response: str) -> str:
     return match.group(1)
 
 
-def _parse_items(response: str) -> list[dict[str, str]]:
+def _parse_items(response: str, requested_count: int) -> list[dict[str, str]]:
     found_match = re.search(r"^found=(\d+)\s*$", response, re.M)
     if not found_match:
         raise ValueError("missing_found_count")
     found = int(found_match.group(1))
+    # The regex only matches non-negative digits, but validate explicitly
+    # (defense in depth) and never build a list sized by an NVR-controlled
+    # value larger than what was actually requested in this page.
+    if found < 0 or found > requested_count:
+        raise ValueError("invalid_found_count")
     items: list[dict[str, str]] = [dict() for _ in range(found)]
     for match in re.finditer(r"^items\[(\d+)\]\.([A-Za-z0-9_]+)=(.*)$", response, re.M):
         index = int(match.group(1))
@@ -112,7 +122,12 @@ class DahuaRecordingClient:
     def _get(self, path: str, params: list[tuple[str, str]]) -> str:
         query = urlencode(params, quote_via=quote)
         with self.opener.open(f"{self.base_url}{path}?{query}", timeout=HTTP_TIMEOUT) as response:
-            return response.read().decode("utf-8", errors="replace")
+            # Read at most MAX_CGI_RESPONSE_BYTES + 1 so we can detect an
+            # oversized response without ever buffering an unbounded body.
+            data = response.read(MAX_CGI_RESPONSE_BYTES + 1)
+            if len(data) > MAX_CGI_RESPONSE_BYTES:
+                raise ValueError("cgi_response_too_large")
+            return data.decode("utf-8", errors="replace")
 
     def query_channel(self, channel_id: int) -> dict:
         """Query the last 24h of recordings for one NVR channel.
@@ -149,11 +164,12 @@ class DahuaRecordingClient:
                 page = _parse_items(
                     self._get(
                         "/cgi-bin/mediaFileFind.cgi",
-                        [("action", "findNextFile"), ("object", object_id), ("count", "100")],
-                    )
+                        [("action", "findNextFile"), ("object", object_id), ("count", str(FIND_NEXT_FILE_COUNT))],
+                    ),
+                    FIND_NEXT_FILE_COUNT,
                 )
                 files.extend(page)
-                if len(page) < 100:
+                if len(page) < FIND_NEXT_FILE_COUNT:
                     break
 
             latest, recent = _latest_recent(files, start, now)
@@ -172,9 +188,20 @@ class DahuaRecordingClient:
         finally:
             if object_id:
                 try:
-                    self._get("/cgi-bin/mediaFileFind.cgi", [("action", "destroy"), ("object", object_id)])
-                except (HTTPError, URLError, OSError, TimeoutError):
-                    pass
+                    destroy_body = self._get(
+                        "/cgi-bin/mediaFileFind.cgi", [("action", "destroy"), ("object", object_id)]
+                    )
+                    # Best-effort confirmation only; never log the object
+                    # handle, request URL, response body or exception text.
+                    if not destroy_body.lstrip().upper().startswith("OK"):
+                        _LOGGER.warning(
+                            "mediaFileFind destroy did not confirm success for channel %s",
+                            channel_id,
+                        )
+                except (HTTPError, URLError, OSError, TimeoutError, ValueError):
+                    _LOGGER.warning(
+                        "mediaFileFind destroy failed for channel %s", channel_id
+                    )
         return {
             "recording_query_ok": False,
             "recording_recent": None,
