@@ -34,9 +34,9 @@ class M3SourceContractTests(unittest.TestCase):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
         self.assertNotIn("icmplib", " ".join(manifest.get("requirements", [])))
 
-    def test_manifest_version_is_0_2_0(self):
+    def test_manifest_version_is_0_2_1(self):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
-        self.assertEqual("0.2.0", manifest.get("version"))
+        self.assertEqual("0.2.1", manifest.get("version"))
 
     def test_required_platforms_and_unique_id_formulas_exist(self):
         const = (INTEGRATION / "const.py").read_text()

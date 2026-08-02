@@ -45,7 +45,8 @@ class AddonSnapshotCamera(CoordinatorEntity[AddonCoordinator], Camera):
         subentry: ConfigSubentry,
         camera: CameraConfig,
     ) -> None:
-        super().__init__(entry.runtime_data.addon)
+        Camera.__init__(self)
+        CoordinatorEntity.__init__(self, entry.runtime_data.addon)
         self.entry = entry
         self.camera_config = camera
         self._attr_unique_id = (
