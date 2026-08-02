@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import importlib.util
 from pathlib import Path
 import sys
@@ -119,22 +118,18 @@ class FakeSession:
 
 
 class AddonApiTests(unittest.IsolatedAsyncioTestCase):
-    async def test_health_channels_and_one_based_snapshot(self):
+    async def test_health_and_channels(self):
         session = FakeSession([
             FakeResponse(payload={"status": "ok"}),
             FakeResponse(payload=[CHANNEL]),
-            FakeResponse(body=b"jpeg", content_type="image/jpeg"),
         ])
         client = addon_api.AddonApiClient("http://addon:8000/", session)
 
         await client.async_get_health()
         channels = await client.async_get_channels()
-        image = await client.async_get_snapshot(1)
 
         self.assertEqual("http://addon:8000", client.base_url)
         self.assertEqual(1, channels[0].channel_id)
-        self.assertEqual(b"jpeg", image)
-        self.assertTrue(session.urls[-1].endswith("/channels/1/snapshot"))
 
     async def test_invalid_contract_is_safe_error(self):
         client = addon_api.AddonApiClient(
@@ -168,10 +163,6 @@ class AddonApiTests(unittest.IsolatedAsyncioTestCase):
             (
                 lambda client: client.async_get_channels(),
                 FakeResponse(enter_raises=aiohttp.ClientConnectionError(secret)),
-            ),
-            (
-                lambda client: client.async_get_snapshot(1),
-                FakeResponse(content_type="image/jpeg", enter_raises=aiohttp.ClientConnectionError(secret)),
             ),
         ):
             with self.subTest(api_call=api_call):
@@ -234,43 +225,6 @@ class AddonApiTests(unittest.IsolatedAsyncioTestCase):
                 )
                 with self.assertRaisesRegex(addon_api.AddonCannotConnect, "addon_unavailable"):
                     await api_call(client)
-
-    async def test_snapshot_read_client_error_maps_to_cannot_connect(self):
-        secret = "user=admin&password=secret"
-        client = addon_api.AddonApiClient(
-            "http://addon:8000",
-            FakeSession(
-                [
-                    FakeResponse(
-                        body=aiohttp.ClientPayloadError(secret),
-                        content_type="image/jpeg",
-                    )
-                ]
-            ),
-        )
-        with self.assertRaises(addon_api.AddonCannotConnect) as ctx:
-            await client.async_get_snapshot(1)
-        self.assertNotIn(secret, str(ctx.exception))
-
-    async def test_snapshot_read_timeout_maps_to_cannot_connect(self):
-        client = addon_api.AddonApiClient(
-            "http://addon:8000",
-            FakeSession([FakeResponse(body=TimeoutError("timeout"), content_type="image/jpeg")]),
-        )
-        with self.assertRaisesRegex(addon_api.AddonCannotConnect, "addon_unavailable"):
-            await client.async_get_snapshot(1)
-
-    async def test_snapshot_status_semantics(self):
-        for status, error in (
-            (404, addon_api.AddonChannelNotFound),
-            (503, addon_api.AddonSnapshotUnavailable),
-        ):
-            with self.subTest(status=status):
-                client = addon_api.AddonApiClient(
-                    "http://addon:8000", FakeSession([FakeResponse(status=status)])
-                )
-                with self.assertRaises(error):
-                    await client.async_get_snapshot(1)
 
     def test_rejects_credentials_and_non_http_urls(self):
         for value in ("ftp://addon", "http://user:pass@addon", "addon:8000"):

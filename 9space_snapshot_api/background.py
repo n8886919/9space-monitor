@@ -6,8 +6,7 @@ Two independent loops run for the lifetime of the process:
 - recording query: every RECORDING_QUERY_INTERVAL_SECONDS (default 900s)
 
 Both loops run their first round immediately on startup (no initial wait),
-bound concurrency so at most a few channels are probed at once (reusing the
-add-on's existing ``max_concurrency`` option), and never let one channel's
+share a fixed single background concurrency slot, and never let one channel's
 failure stop the rest of the round or crash the loop itself. API handlers
 never call into these modules directly; they only read ``ChannelStateStore``.
 """
@@ -32,8 +31,9 @@ RECORDING_QUERY_INTERVAL_SECONDS = 900
 # First real-hardware release: live-video probing and recording queries
 # share a single background concurrency slot (total background NVR
 # operations = 1 at a time), independent of the snapshot ffmpeg
-# ``max_concurrency`` option. Callers create one ``asyncio.Semaphore`` with
-# this value and pass the same instance to both loops below.
+# legacy snapshot ``max_concurrency`` option. Callers create one
+# ``asyncio.Semaphore`` with this value and pass the same instance to both
+# loops below.
 BACKGROUND_CONCURRENCY = 1
 
 

@@ -22,21 +22,12 @@ class AddonInvalidResponse(AddonApiError):
     """The add-on returned a response outside the API contract."""
 
 
-class AddonChannelNotFound(AddonApiError):
-    """The requested one-based channel does not exist."""
-
-
-class AddonSnapshotUnavailable(AddonApiError):
-    """The requested snapshot is temporarily unavailable."""
-
-
 @dataclass(frozen=True, slots=True)
 class AddonChannel:
     """Parsed minimal channel state from the local API."""
 
     channel_id: int
     live_video: bool | None
-    snapshot_available: bool
     recording_query_ok: bool
     recording_recent: bool | None
     last_recording: str | None
@@ -51,7 +42,6 @@ class AddonChannel:
         required = {
             "channel_id",
             "live_video",
-            "snapshot_available",
             "recording_query_ok",
             "recording_recent",
             "last_recording",
@@ -64,8 +54,6 @@ class AddonChannel:
         if type(channel_id) is not int or channel_id < 1:
             raise AddonInvalidResponse("invalid_channel_contract")
         if value["live_video"] is not None and type(value["live_video"]) is not bool:
-            raise AddonInvalidResponse("invalid_channel_contract")
-        if type(value["snapshot_available"]) is not bool:
             raise AddonInvalidResponse("invalid_channel_contract")
         if type(value["recording_query_ok"]) is not bool:
             raise AddonInvalidResponse("invalid_channel_contract")
@@ -91,7 +79,6 @@ class AddonChannel:
         return {
             "channel_id": self.channel_id,
             "nvr_live_video": self.live_video,
-            "snapshot_available": self.snapshot_available,
             "recording_query_ok": self.recording_query_ok,
             "recording_recent": self.recording_recent,
             "last_recording": self.last_recording,
@@ -190,33 +177,3 @@ class AddonApiClient:
         if len(ids) != len(set(ids)):
             raise AddonInvalidResponse("duplicate_channel_id")
         return channels
-
-    async def async_get_snapshot(self, channel_id: int) -> bytes:
-        """Return a non-empty JPEG for a one-based channel."""
-        if type(channel_id) is not int or channel_id < 1:
-            raise AddonChannelNotFound("channel_not_found")
-        response = await self._request(
-            f"/api/v1/channels/{channel_id}/snapshot"
-        )
-        try:
-            async with response:
-                if response.status == 404:
-                    raise AddonChannelNotFound("channel_not_found")
-                if response.status == 503:
-                    raise AddonSnapshotUnavailable("snapshot_unavailable")
-                if response.status != 200:
-                    raise AddonInvalidResponse("unexpected_http_status")
-                content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
-                if content_type != "image/jpeg":
-                    raise AddonInvalidResponse("invalid_snapshot_content_type")
-                try:
-                    body = await response.read()
-                except (aiohttp.ClientError, TimeoutError):
-                    raise self._map_response_transport_error() from None
-        except AddonApiError:
-            raise
-        except (aiohttp.ClientError, TimeoutError):
-            raise self._map_response_transport_error() from None
-        if not body:
-            raise AddonInvalidResponse("empty_snapshot")
-        return body

@@ -1,5 +1,5 @@
 name: 9Space Snapshot Addon
-version: "0.3.1"
+version: "0.3.2"
 slug: 9space_snapshot_addon
 description: >-
   Monorepo development instance of the 9Space local API. Adds /healthz and
@@ -26,7 +26,7 @@ options:
   subtype: 0
   health_timeout_ms: 10000
   jpeg_qv: 32
-  max_concurrency: 2
+  max_concurrency: 1
   nvr_http_port: 80
   channel_count: 14
 

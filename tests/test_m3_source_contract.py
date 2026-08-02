@@ -34,16 +34,20 @@ class M3SourceContractTests(unittest.TestCase):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
         self.assertNotIn("icmplib", " ".join(manifest.get("requirements", [])))
 
-    def test_manifest_version_is_0_2_1(self):
+    def test_manifest_version_is_0_2_2(self):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
-        self.assertEqual("0.2.1", manifest.get("version"))
+        self.assertEqual("0.2.2", manifest.get("version"))
 
-    def test_required_platforms_and_unique_id_formulas_exist(self):
+    def test_snapshot_camera_platform_and_client_are_removed(self):
         const = (INTEGRATION / "const.py").read_text()
-        camera = (INTEGRATION / "camera.py").read_text()
+        python = "\n".join(path.read_text() for path in INTEGRATION.glob("*.py"))
+        self.assertFalse((INTEGRATION / "camera.py").exists())
+        self.assertNotIn("Platform.CAMERA", const)
+        self.assertNotIn("async_get_snapshot", python)
+        self.assertNotIn("AddonSnapshotUnavailable", python)
+
+    def test_existing_entity_unique_id_formula_remains(self):
         entity = (INTEGRATION / "entity.py").read_text()
-        self.assertIn("Platform.CAMERA", const)
-        self.assertIn('f"{entry.entry_id}_{subentry.subentry_id}_snapshot"', camera)
         self.assertIn('f"{entry.entry_id}_{subentry.subentry_id}_{description.key}"', entity)
 
     def test_channel_mapping_has_no_offset(self):

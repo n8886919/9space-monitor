@@ -27,8 +27,8 @@ _sem: Optional[asyncio.Semaphore] = None
 
 # M2B review fix: live-video probing and recording queries share one
 # background concurrency slot (background.BACKGROUND_CONCURRENCY), separate
-# from the snapshot ffmpeg semaphore (_sem) above, which still uses the
-# existing max_concurrency option.
+# from the snapshot ffmpeg semaphore (_sem) above, which is hard-capped at
+# one capture regardless of the legacy max_concurrency option.
 _background_sem: Optional[asyncio.Semaphore] = None
 
 # M2B: in-memory per-channel state written only by the background probe
@@ -184,12 +184,13 @@ async def _ffmpeg_grab_jpeg(
 @app.on_event("startup")
 async def _startup():
     global _sem, _background_sem, _live_task, _recording_task
-    opts = _load_options()
-    max_conc = int(_opt(opts, "max_concurrency", 2))
-    _sem = asyncio.Semaphore(max(1, max_conc))
+    # max_concurrency remains accepted in options.json for compatibility,
+    # but snapshot ffmpeg work is deliberately serialized to avoid competing
+    # with other consumers of this NVR.
+    _sem = asyncio.Semaphore(1)
     # Live-video probing and recording queries share this single semaphore
-    # (fixed background.BACKGROUND_CONCURRENCY, not the max_concurrency
-    # option) so total background NVR operations never exceed 1 at a time.
+    # (fixed background.BACKGROUND_CONCURRENCY, not the legacy option) so
+    # total background NVR operations never exceed 1 at a time.
     _background_sem = asyncio.Semaphore(background.BACKGROUND_CONCURRENCY)
 
     _live_first_round_ready.clear()

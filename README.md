@@ -29,7 +29,7 @@
 5. Integration 經 local add-on API 取得：
    - NVR channel 是否有實際影像
    - 最近錄影狀態
-   - snapshot
+   - 不取得 snapshot；未來由 Center/server 統一呼叫 add-on Snapshot API
 6. 攝影機 Ping、在線率、RTT 等資料改用 Home Assistant 既有 Ping integration，不在本專案重做。
 7. 由使用者與 AI agent 透過 SSH 手動部署到單一測試／正式站點。
 8. 保留未來 center 使用 local API 的穩定邊界，但現在不開發 center。
@@ -153,8 +153,9 @@ Home Assistant
 - [x] 把 Dahua recording query 搬到 add-on（`recording_query.py`，沿用 integration 原本的 `mediaFileFind.cgi` 查詢與 24 小時判定邏輯，含 Asia/Taipei 本地時間假設），預設每 900 秒執行一次。
 - [x] add-on 啟動後立即執行第一輪，不等待完整 interval。
 - [x] `/api/v1/channels*` 改為只讀取 add-on 保存的最新背景結果（`channel_state.py` 的 in-memory store），不讓每次 GET 對 channel 同步執行探測。
-- [x] 背景探測以 `max_concurrency` option 限制同時數量，單一 channel 失敗或逾時不影響其他 channel、也不中止整批。
+- [x] 背景探測共用固定單一 semaphore（併發 1）；單一 channel 失敗或逾時不影響其他 channel、也不中止整批。
 - [x] Snapshot 維持 demand-driven 與現有 cache 行為（M2A 已共用同一套 cache/capture 路徑，M2B 不重做）。
+- [x] `max_concurrency` 僅為既有 Snapshot options 相容而保留；Snapshot ffmpeg runtime hard cap 固定為 1，不能提高抓圖併發。
 - [x] Add-on 對外 response 不包含 credentials、RTSP URL、CGI request URL 或完整 ffmpeg/CGI stderr／body。
 - [x] 使用 fake-based unit tests（`test_background_probes.py`），不要求真實 NVR、Docker 或 HAOS。
 - [x] 背景 task 使用 FastAPI `startup`／`shutdown` event 管理；shutdown 會 cancel 並 await，不留孤兒 task。
@@ -181,7 +182,7 @@ Home Assistant
 - [ ] 確認舊 API 仍可供同事使用。
 - [ ] SSH 部署 integration。
 - [ ] 手動重新設定 integration；不寫自動 migration。
-- [ ] 確認 snapshot、live-video status、recording status。
+- [ ] 確認 live-video status、recording status；Snapshot 僅驗證 add-on API，HA integration 不建立 Snapshot camera entity。
 - [ ] 確認 Home Assistant Ping integration 負責攝影機在線狀態。
 - [ ] 記錄 rollback 路徑。
 
@@ -192,7 +193,7 @@ Home Assistant
 1. 舊 endpoint response 相容。
 2. 新 channel endpoint 可用 fake NVR result 回 JSON。
 3. 新 snapshot endpoint 回 `image/jpeg`。
-4. Integration API client 可解析 channel response。
+4. Integration API client 可解析 channel response（不解析或呼叫 Snapshot）。
 5. Integration source/config flow 不再使用 NVR password。
 6. Integration manifest 不再依賴 `icmplib`。
 
@@ -214,7 +215,8 @@ Home Assistant
 - Add-on 是唯一直接存取 NVR 的程式。
 - Integration 不保存 NVR credentials。
 - 舊 snapshot API 不變。
-- Integration 能透過 local API 顯示既有核心狀態。
+- Integration 能透過 local API 顯示既有核心狀態，但不建立 Snapshot camera entities。
+- 未來 Center/server 可透過 local add-on Snapshot API 統一抓圖。
 - Ping 使用 Home Assistant 現成 integration。
 - 單一站點可由 AI agent 依文件手動部署及 rollback。
 - 未來 center 呼叫 local API 的邊界已被保留。

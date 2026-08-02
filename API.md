@@ -4,7 +4,7 @@
 
 此 API 是：
 
-- Home Assistant integration 與同站點 add-on 之間的邊界。
+- Home Assistant integration 與同站點 add-on 的狀態邊界。
 - 未來 center 透過 Tailscale 呼叫各站點 local service 的基礎。
 - 目前正在使用的舊 snapshot client 的相容介面。
 
@@ -115,7 +115,8 @@ HTTP status：`404`
 
 ### `GET /api/v1/channels/{channel_id}/snapshot`
 
-用途：供 Home Assistant camera entity 與未來 center 取得最新 JPEG。
+用途：供既有 client 與未來 Center/server 取得最新 JPEG；Home Assistant
+integration 不呼叫此 endpoint，也不建立 Snapshot camera entity。
 
 成功：
 
@@ -193,10 +194,14 @@ HTTP status：`503`
 - 使用 async HTTP client。
 - 不在 Home Assistant event loop 執行 blocking request。
 - Coordinator 可以一次讀 `/api/v1/channels`，不要每個 entity 各自 request。
-- Camera entity 只有在需要圖片時呼叫 snapshot endpoint。
+- Integration 不呼叫 Snapshot endpoint，也不建立 Snapshot camera entity。
 - Add-on 無法連線時，NVR 相關 entities 標記 unavailable。
 - 不因 add-on unavailable 阻塞 Home Assistant startup。
 - Integration 不 fallback 回直接連接 NVR。
+
+Snapshot 保持由 add-on demand-driven capture 與 cache 提供。Snapshot ffmpeg
+實際同時抓圖固定為 1；`max_concurrency` option 僅為既有設定相容而保留，
+不得提高 Snapshot 併發。未來由 Center/server 呼叫此 endpoint 統一抓圖。
 
 ## 相容性政策
 

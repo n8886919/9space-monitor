@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2 - 2026-08-03
+
+- Hard-capped snapshot ffmpeg capture concurrency at one, regardless of the
+  retained legacy `max_concurrency` option.
+- Changed the default `max_concurrency` option to `1` while retaining its
+  schema for existing add-on options compatibility.
+
 ## 0.3.1 - 2026-08-02
 
 ### Added

@@ -26,8 +26,8 @@
 - 只有 add-on 可保存 NVR host、ports、username、password。
 - Integration 不得建立 NVR RTSP URL。
 - Integration 不得直接呼叫 Dahua CGI API。
-- Integration 不得執行 NVR ffmpeg snapshot。
-- Integration 透過 local add-on API 取得 NVR 狀態、錄影狀態與 snapshot。
+- Integration 不得執行 NVR ffmpeg snapshot、呼叫 add-on Snapshot endpoint 或建立 Snapshot camera entity。
+- Integration 透過 local add-on API 取得 NVR 狀態與錄影狀態。
 - 攝影機 Ping 使用 Home Assistant Ping integration，本專案不重做。
 - 既有 `GET /api/camera/{camera_id}` 必須保持相容，直到使用者明確批准修改。
 - 現階段不開發 center，但不得破壞未來 center 呼叫 local API 的可能性。
@@ -167,7 +167,7 @@ GET /api/camera/{camera_id}
 - Home Assistant entity 若與舊 entity 衝突，不得建立名稱或 unique ID 後綴 `_2`；M3（或任何之後改動 entity 的任務）應保留／覆蓋既有 entity identity。若無法安全完成，停止交由使用者處理，不自行選擇一個折衷方案。
 - 任何需要 Home Assistant 網頁 UI 才能完成的操作，必須停止，列出最少操作步驟交給使用者，不嘗試用其他方式繞過。
 - 遇到規格不清、可能影響現有正在使用的服務（例如 8122 正式 instance），或較適合由使用者操作（例如需要真實 credentials、需要網頁 UI）的事項，停止並回報，不得因使用者暫時沒有回覆而自行猜測後繼續擴大範圍。
-- SSH 可使用 `ssh -p 2222 root@<site-host>`（實際 host 由操作者提供，不寫入本文件或任何 repository 檔案）；除非任務明確核准部署，否則 SSH 只能用於唯讀檢查（例如 `ha apps info`、`ha apps list`、`curl` 讀取 endpoint、`tail` log），不得執行 restart、update、rebuild 或修改遠端檔案。
+- SSH 可使用 `ssh -p 22 root@<site-host>`（實際 host 由操作者提供，不寫入本文件或任何 repository 檔案）；除非任務明確核准部署，否則 SSH 只能用於唯讀檢查（例如 `ha apps info`、`ha apps list`、`curl` 讀取 endpoint、`tail` log），不得執行 restart、update、rebuild 或修改遠端檔案。
 - 回報一律使用中文。
 - 不得把真實 credential（NVR password、真實站點 IP 等）寫入 AGENTS.md 或任何 repository 檔案；這類資訊只允許暫時存在於當次對話或終端機輸出中。
 

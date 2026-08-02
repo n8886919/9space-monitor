@@ -20,9 +20,9 @@
 
 - `8122` 是獨立舊正式服務，永久禁止操作。
 - 不得對 `8122` 執行 test、restart、rebuild、reload、modify，亦不得把 `8122` 當成 integration URL。
-- 本 repository 的 monorepo add-on 目前已部署為 `0.3.1`，host port 是 `8222`，container port 是 `8000`。
+- 本 repository 的 monorepo add-on 版本為 `0.3.2`，host port 是 `8222`，container port 是 `8000`。
 - Supervisor add-on identifier／slug 與 internal hostname 不可混用。
-- 若本輪只需完成 M4 integration 切換，預設走「快速路徑」：唯讀確認 add-on 正常後，跳過 add-on 上傳、rebuild 與 restart，只部署 integration。
+- 快速路徑只適用於遠端 source 與已安裝 add-on 都已是 `0.3.2`；不得因舊 `0.3.1` endpoint 可用就跳過 add-on 部署。
 - 任何 add-on 上傳、rebuild、restart、rollback 操作都必須再次取得使用者明確授權後才可執行。
 - 不得直接編輯 `/config/.storage/core.config_entries` 或其他 `.storage` 檔案。
 - 不得自動建立或接受帶有 `_2` 後綴的 replacement entities。
@@ -33,7 +33,7 @@
 
 ```bash
 export HA_HOST="<site-host-or-ip>"
-export HA_SSH_PORT="2222"
+export HA_SSH_PORT="22"
 export HA_USER="root"
 export REMOTE="${HA_USER}@${HA_HOST}"
 
@@ -127,13 +127,27 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 ## M4 快速路徑（預設）
 
-目前 M4 預設不重新部署 add-on，因為 monorepo add-on `0.3.1` 已部署且 smoke test 通過。本輪主要部署 integration。
+Snapshot API smoke test 是 add-on API 與未來 Center/server 的 contract 驗證；integration 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
 
-只有在以下三個唯讀檢查都正常時，才可跳過 add-on 上傳、rebuild 與 restart：
+只有遠端 source 和 Supervisor 已安裝版本都明確為 `0.3.2`，且以下唯讀檢查都正常時，才可跳過 add-on 上傳、rebuild 與 restart：
 
+- `${ADDON_REMOTE_DIR}/config.yaml` 的 `version: "0.3.2"`
+- `ha addons info "$ADDON_SLUG"` 顯示 version `0.3.2`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/healthz`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/camera/1`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/v1/channels`
+
+版本 gate（唯讀）：
+
+```bash
+ssh -p "$HA_SSH_PORT" "$REMOTE" "
+  set -eu
+  grep -Fx 'version: \"0.3.2\"' '$ADDON_REMOTE_DIR/config.yaml'
+  ha addons info '$ADDON_SLUG' | grep -Eq 'version:[[:space:]]*0\\.3\\.2([[:space:]]|\$)'
+"
+```
+
+任一版本檢查或 smoke test 失敗時，快速路徑立即關閉；停止並要求使用者另行授權 add-on 上傳、rebuild 與 restart。不得以 `8122` 作替代驗證。
 
 host-side smoke test 範例：
 
@@ -182,7 +196,29 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 "
 ```
 
-若上述三項都正常：
+v1 Snapshot JPEG smoke test（不輸出 JPEG body）：
+
+```bash
+CAMERA_ID=1
+test "$ADDON_HOST_PORT" = "8222"
+test "$ADDON_HOST_PORT" != "8122"
+
+ssh -p "$HA_SSH_PORT" "$REMOTE" "
+  set -eu
+  test '$ADDON_HOST_PORT' = '8222'
+  test '$ADDON_HOST_PORT' != '8122'
+  tmp_dir=\$(mktemp -d /tmp/9space-v1-snapshot.XXXXXX)
+  trap 'rm -rf "\$tmp_dir"' EXIT
+  code=\$(curl -sS -D "\$tmp_dir/headers" -o "\$tmp_dir/snapshot.jpg" \
+    -w '%{http_code}' \
+    'http://127.0.0.1:$ADDON_HOST_PORT/api/v1/channels/$CAMERA_ID/snapshot')
+  test \"\$code\" = '200'
+  grep -qi '^content-type:[[:space:]]*image/jpeg' "\$tmp_dir/headers"
+  test -s "\$tmp_dir/snapshot.jpg"
+"
+```
+
+若以上版本 gate 與全部 smoke tests 都正常：
 
 1. 不上傳 add-on source。
 2. 不執行 `ha addons rebuild`。
@@ -336,7 +372,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" '
 
 ### 3. UI Reconfigure 既有 integration
 
-本階段不寫 config-entry migration。優先對既有 `nvr_monitor` entry 使用 Reconfigure，以保留 `entry_id`、`subentry_id`、entity identity 與 Dashboard 對應。
+本階段不寫 config-entry migration。優先對既有 `nvr_monitor` entry 使用 Reconfigure，以保留仍由 integration 提供的 `entry_id`、`subentry_id`、entity identity 與 Dashboard 對應；刻意退役的 `camera.*_snapshot` 不在此保留範圍。
 
 在 Home Assistant UI：
 
@@ -344,7 +380,8 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" '
 2. 執行 Reconfigure。
 3. 輸入 `http://${ADDON_HOSTNAME}:8000`。
 4. 完成驗證並儲存。
-5. 確認既有 entry、subentries、entity identities 都保留。
+5. 確認既有 entry、subentries 與仍由 integration 提供的 entity identities 都保留。
+6. 部署後由使用者在 HA UI 移除不再由 integration 提供的 orphan `camera.*_snapshot` entities；不得編輯 `.storage`，也不得建立或接受 `_2` replacement entities。
 
 不要要求使用者先刪除 entry。不要由 AI 直接編輯 `/config/.storage/core.config_entries`。
 
@@ -387,8 +424,9 @@ Engineer 不得自行替使用者選擇。
 [ ] 舊 /api/camera/{camera_id} 正常（monorepo add-on host port = 8222）
 [ ] /api/v1/channels 正常（monorepo add-on host port = 8222）
 [ ] integration base URL = http://${ADDON_HOSTNAME}:8000
-[ ] Reconfigure 後既有 entry、subentries、entity identities 保留
-[ ] snapshot Content-Type 為 image/jpeg
+[ ] Reconfigure 後既有 entry、subentries 與非 Snapshot entity identities 保留
+[ ] 使用者已在 HA UI 移除 orphan `camera.*_snapshot` entities；未修改 `.storage`，未產生 `_2`
+[ ] add-on Snapshot endpoint Content-Type 為 image/jpeg（未來 Center/server contract）
 [ ] integration 不再要求 NVR password
 [ ] NVR channel live-video entities 正常
 [ ] recording entities 正常
