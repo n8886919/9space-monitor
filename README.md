@@ -77,10 +77,10 @@ Center（M5）
 
 必須保留的 TODO：
 
-- [ ] M5A 建立 Center Docker/SQLite skeleton、七日 retention 與容量限制。
-- [ ] M5B Add-on push NVR telemetry；producer 不寫 history 磁碟。
-- [ ] M5C Integration push allowlisted HA Ping/System Monitor/RPi Power/Fast.com telemetry。
-- [ ] M5D 依各站手動 mapping 產生 dashboard YAML（NVR、Ping、診斷三張表）。
+- [x] M5A 建立 Center Docker/SQLite skeleton、七日 retention 與容量限制。
+- [x] M5B Add-on push NVR telemetry；producer 不寫 history 磁碟。
+- [x] M5C Integration push allowlisted HA Ping/System Monitor/RPi Power/Fast.com telemetry。
+- [x] M5D 依各站手動 mapping 產生 dashboard YAML（NVR、Ping、診斷三張表）。
 - [ ] 未來才決定 Center 取圖與同事 legacy client migration；M5 不傳送 JPEG。
 
 ## M5 明確不做
@@ -185,12 +185,12 @@ M2B 已隨後在 monorepo add-on 完成實機驗證；8122 獨立舊正式 insta
 ### M5：多站 telemetry 與 Center（進行中）
 
 - [ ] 約十站；每站 channel count 與 entity IDs 均由 site mapping 手動定義，不假設 `01`～`14`。
-- [ ] Add-on push NVR telemetry：live/RTSP、recording query、24 小時統計與診斷 metadata。
-- [ ] Integration push allowlisted HA telemetry：Ping、System Monitor、RPi Power、Fast.com。
-- [ ] 兩種 producer 均只用 24 小時 RAM ring 與 bounded memory queue；Center 失聯時可丟棄資料，不寫 telemetry history 到磁碟。
-- [ ] Center Docker/SQLite：七日 retention、單站 logical 保守水位、2 GiB 實體檔 fail-closed guard，預設 port `8765`；具體預設值待實作完成後核對。
-- [ ] 永久不保存、傳輸、匯出或在 log 中輸出 JPEG。
-- [ ] Dashboard renderer 依 site mapping 產生可貼入 HA UI 的 YAML，分為 NVR/recording、Ping/network、diagnostics。
+- [x] Add-on push NVR telemetry：live/RTSP、recording query、24 小時統計與診斷 metadata。
+- [x] Integration push allowlisted HA telemetry：Ping、System Monitor、RPi Power、Fast.com。
+- [x] 兩種 producer 均只用 24 小時 RAM ring 與 bounded memory queue；Center 失聯時可丟棄資料，不寫 telemetry history 到磁碟。
+- [x] Center Docker/SQLite：七日 retention、單站 logical 保守水位、2 GiB 實體檔 fail-closed guard，預設 port `8765`；具體預設值待實作完成後核對。
+- [x] 永久不保存、傳輸、匯出或在 log 中輸出 JPEG。
+- [x] Dashboard renderer 依 site mapping 產生可貼入 HA UI 的 YAML，分為 NVR/recording、Ping/network、diagnostics。
 - [ ] 承德原型使用 `site_id: chengde`、顯示名稱「承德」；Tailscale 內網運作，M5 不新增 per-site token。
 
 ## 最小測試
@@ -229,6 +229,20 @@ M2B 已隨後在 monorepo add-on 完成實機驗證；8122 獨立舊正式 insta
 - Center telemetry push 與 legacy local API 的邊界已被保留。
 
 不要求多站點自動部署或正式 release pipeline。M5 的 Center 是診斷資料服務，不處理影像。
+
+### M5D dashboard mapping
+
+`dashboard/chengde.sample.json` 是合成範例；每站 private mapping 請以
+`dashboard/*.private.json` 保存（已 ignore），不可提交真實 entity ID、IP、credentials 或影像資料。
+Renderer 僅輸出 stdout：
+
+```text
+python3 -m dashboard.render dashboard/site.private.json --format lovelace
+python3 -m dashboard.render dashboard/site.private.json --format telemetry
+```
+
+mapping 明定 channel ID、NVR entity refs、Ping 與 diagnostics refs。telemetry output 可直接貼到
+M5C Reconfigure；它不含 NVR entities，並與 M5C allowlist 共用嚴格驗證。
 
 ## 給 AI agent 的啟動指令
 
