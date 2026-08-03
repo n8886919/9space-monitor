@@ -13,6 +13,13 @@ from fastapi.responses import JSONResponse
 
 import background
 from channel_state import ChannelStateStore
+from telemetry import (
+    NvrTelemetryModel,
+    TelemetryProducer,
+    safe_center_url,
+    safe_site_metadata,
+    telemetry_channel_ids,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,10 +43,58 @@ _background_sem: Optional[asyncio.Semaphore] = None
 _channel_store = ChannelStateStore()
 _live_task: Optional[asyncio.Task] = None
 _recording_task: Optional[asyncio.Task] = None
+_telemetry_task: Optional[asyncio.Task] = None
 # Set once each background loop's first round has completed. Tests can wait
 # on these (from a different thread) instead of racing the background task.
 _live_first_round_ready = threading.Event()
 _recording_first_round_ready = threading.Event()
+
+
+async def _telemetry_loop() -> None:
+    """Observe already-known channel state and best-effort push safe metadata.
+
+    This intentionally never calls an NVR service.  The queue's ``put_nowait``
+    path means Center latency or an outage cannot delay snapshot handlers or
+    either background NVR loop.
+    """
+    opts = _load_options()
+    center_url = opts.get("center_telemetry_url")
+    metadata = safe_site_metadata(opts.get("site_id"), opts.get("site_display_name"))
+    center_url = safe_center_url(center_url)
+    if center_url is None or metadata is None:
+        return
+    site_id, display_name = metadata
+    # A 30-second lower bound keeps even misconfigured 24-hour rings bounded.
+    interval_seconds = max(30, int(_opt(opts, "telemetry_interval_seconds", 300)))
+    producer = TelemetryProducer(
+        center_url=center_url,
+        site_id=site_id,
+        display_name=display_name,
+        queue_max_batches=max(1, int(_opt(opts, "telemetry_queue_max_batches", 100))),
+    )
+    model = NvrTelemetryModel(sample_interval_seconds=interval_seconds)
+    producer.start()
+    try:
+        while True:
+            now_ms = int(time.time() * 1000)
+            channel_states = {
+                channel_id: _channel_store.telemetry_snapshot(channel_id)
+                for channel_id in telemetry_channel_ids(_load_options().get("channel_count"))
+            }
+            model.observe(channel_states, now_ms=now_ms)
+            events = model.events(
+                site_id,
+                channel_states,
+                now_ms=now_ms,
+                dropped_events=producer.dropped_events,
+            )
+            # Center accepts at most 500 events per batch.  Splitting here
+            # remains non-blocking; any full queue simply drops that chunk.
+            for offset in range(0, len(events), 500):
+                producer.enqueue(events[offset : offset + 500])
+            await asyncio.sleep(interval_seconds)
+    finally:
+        await producer.stop()
 
 
 @dataclass
@@ -183,7 +238,7 @@ async def _ffmpeg_grab_jpeg(
 
 @app.on_event("startup")
 async def _startup():
-    global _sem, _background_sem, _live_task, _recording_task
+    global _sem, _background_sem, _live_task, _recording_task, _telemetry_task
     # max_concurrency remains accepted in options.json for compatibility,
     # but snapshot ffmpeg work is deliberately serialized to avoid competing
     # with other consumers of this NVR.
@@ -211,6 +266,7 @@ async def _startup():
             ready_event=_recording_first_round_ready,
         )
     )
+    _telemetry_task = asyncio.create_task(_telemetry_loop())
 
 
 @app.on_event("shutdown")
@@ -228,11 +284,11 @@ async def _shutdown():
     force-cancellable, and lower-level DNS / OS socket behaviour may still
     delay the underlying thread beyond the coroutine's cancellation.
     """
-    global _live_task, _recording_task
-    for task in (_live_task, _recording_task):
+    global _live_task, _recording_task, _telemetry_task
+    for task in (_live_task, _recording_task, _telemetry_task):
         if task is not None:
             task.cancel()
-    for task in (_live_task, _recording_task):
+    for task in (_live_task, _recording_task, _telemetry_task):
         if task is not None:
             try:
                 await task
@@ -240,6 +296,7 @@ async def _shutdown():
                 pass
     _live_task = None
     _recording_task = None
+    _telemetry_task = None
 
 
 # ---------------------------------------------------------------------------

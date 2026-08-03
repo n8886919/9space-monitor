@@ -164,5 +164,28 @@ class ChannelStateStore:
             return ChannelState(channel_id=channel_id).as_dict()
         return state.as_dict()
 
+    def telemetry_snapshot(self, channel_id: int) -> dict:
+        """Return source-specific state for the internal telemetry worker.
+
+        Unlike ``snapshot()``, this deliberately does not merge error codes:
+        the Center's ``nvr.live`` and ``nvr.recording`` events must retain
+        their own NVR-operation provenance.  It is not exposed by any API.
+        """
+        state = self._states.get(channel_id)
+        if state is None:
+            state = ChannelState(channel_id=channel_id)
+        return {
+            "live": {
+                "live_video": state.live_video,
+                "error_code": state.live_error,
+            },
+            "recording": {
+                "recording_query_ok": state.recording_query_ok,
+                "recording_recent": state.recording_recent,
+                "last_recording": state.last_recording,
+                "error_code": state.recording_error,
+            },
+        }
+
     def clear(self) -> None:
         self._states.clear()
