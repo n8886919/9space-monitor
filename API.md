@@ -218,6 +218,10 @@ Center 接收兩類 sanitized batch，皆不含 JPEG、credentials、Authorizati
 1. Add-on NVR telemetry：channel live/recording 狀態、24 小時 aggregates、probe/query/snapshot metadata、allowlisted Dahua diagnostics。
 2. Integration HA telemetry：allowlisted Ping、System Monitor、RPi Power、Fast.com entity states。
 
+System Monitor 的 M5 allowlist 包含 disk／memory／load／temperature，以及
+`processor_use_percent`、`last_boot`（含時區 ISO 8601）與 `uptime_seconds`（unit `s`）。
+Ping mapping 必須明確指定 Center-safe channel ID；其餘 HA metrics 的 channel ID 為 `null`。
+
 Producer 規則：
 
 - 非阻塞、短 timeout；Center 失聯不得影響 NVR probe、integration coordinator 或 HA startup。

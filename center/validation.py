@@ -68,6 +68,7 @@ ALLOWED_METRIC_KEYS = frozenset(
         "integration_version",
         "invalid_file_count_24h",
         "largest_gap_seconds_24h",
+        "last_boot",
         "last_recording",
         "last_recording_age_hours",
         "live_observed_hours_24h",
@@ -82,6 +83,7 @@ ALLOWED_METRIC_KEYS = frozenset(
         "page_count",
         "packet_loss_percent",
         "play_status",
+        "processor_use_percent",
         "probe_duration_ms",
         "query_duration_ms",
         "recording_coverage_24h_pct",
@@ -101,6 +103,7 @@ ALLOWED_METRIC_KEYS = frozenset(
         "temperature_c",
         "truncated",
         "unit",
+        "uptime_seconds",
         "upload_mbps",
         "download_mbps",
         "valid_file_count_24h",
@@ -146,6 +149,7 @@ _NUMBER_RANGES = {
     "memory_free_mb": (0.0, 10**9),
     "memory_used_percent": (0.0, 100.0),
     "packet_loss_percent": (0.0, 100.0),
+    "processor_use_percent": (0.0, 100.0),
     "probe_duration_ms": (0.0, 3_600_000.0),
     "query_duration_ms": (0.0, 3_600_000.0),
     "recording_coverage_24h_pct": (0.0, 100.0),
@@ -155,10 +159,11 @@ _NUMBER_RANGES = {
     "storage_used_percent": (0.0, 100.0),
     "temperature_c": (-100.0, 300.0),
     "upload_mbps": (0.0, 1_000_000.0),
+    "uptime_seconds": (0.0, 1_000_000_000.0),
     "voltage_v": (0.0, 1000.0),
 }
 _STATUS_METRICS = {"describe_status", "play_status", "setup_status"}
-_TIMESTAMP_METRICS = {"checked_at", "last_recording"}
+_TIMESTAMP_METRICS = {"checked_at", "last_boot", "last_recording"}
 _CODE_METRICS = {"error_code", "result_code"}
 _VERSION_METRICS = {"source_version", "integration_version"}
 _STATE_VALUES = frozenset(

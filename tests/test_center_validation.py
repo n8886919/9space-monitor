@@ -89,6 +89,18 @@ class CenterValidationTests(unittest.TestCase):
                 with self.assertRaises(TelemetryValidationError):
                     validate_batch(payload)
 
+    def test_accepts_system_monitor_cpu_boot_and_uptime(self) -> None:
+        payload = valid_payload()
+        payload["source"] = "integration"
+        payload["events"][0].update({"kind": "ha.system", "channel_id": None})
+        payload["events"][0]["metrics"] = {
+            "processor_use_percent": 99.5,
+            "last_boot": "2026-08-04T00:00:00+00:00",
+            "uptime_seconds": 12,
+            "unit": "s",
+        }
+        self.assertEqual(12, validate_batch(payload).events[0].metrics["uptime_seconds"])
+
     def test_rejects_ip_or_url_in_display_name_metadata(self) -> None:
         for display_name in (
             "站點 192.168.0.10",

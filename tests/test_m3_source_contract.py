@@ -34,9 +34,9 @@ class M3SourceContractTests(unittest.TestCase):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
         self.assertNotIn("icmplib", " ".join(manifest.get("requirements", [])))
 
-    def test_manifest_version_is_0_2_2(self):
+    def test_manifest_version_is_0_2_3(self):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
-        self.assertEqual("0.2.2", manifest.get("version"))
+        self.assertEqual("0.2.3", manifest.get("version"))
 
     def test_snapshot_camera_platform_and_client_are_removed(self):
         const = (INTEGRATION / "const.py").read_text()
@@ -55,6 +55,12 @@ class M3SourceContractTests(unittest.TestCase):
         self.assertIn("by_channel[camera.channel]", coordinator)
         self.assertNotIn("camera.channel +", coordinator)
         self.assertNotIn("camera.channel -", coordinator)
+
+    def test_telemetry_scheduler_stops_only_after_successful_platform_unload(self):
+        init = (INTEGRATION / "__init__.py").read_text()
+        self.assertIn("telemetry_unsubscribe", init)
+        self.assertIn("platforms_unloaded=unloaded", init)
+        self.assertNotIn("entry.async_on_unload(\n            async_track_time_interval", init)
 
 
 if __name__ == "__main__":
