@@ -5,13 +5,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import math
 import os
 import sqlite3
 import threading
 import time
 from typing import Any
 
-from .validation import ValidatedBatch, ValidatedEvent, canonical_metrics_json
+from .validation import (
+    TelemetryValidationError,
+    ValidatedBatch,
+    ValidatedEvent,
+    canonical_metrics_json,
+    validate_display_name,
+    validate_error_code,
+    validate_site_id,
+)
+from .snapshots import validate_camera_id
 
 RETENTION_SECONDS = 7 * 24 * 60 * 60
 # Logical waterlines deliberately leave substantial room for SQLite pages,
@@ -21,6 +31,7 @@ DEFAULT_GLOBAL_LIMIT_BYTES = 1536 * 1024 * 1024
 DEFAULT_PHYSICAL_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_PHYSICAL_RESERVE_BYTES = 128 * 1024 * 1024
 MAX_FUTURE_SKEW_SECONDS = 5 * 60
+MAX_SNAPSHOT_LATENCY_MS = 3_600_000.0
 
 
 class CapacityExceeded(RuntimeError):
@@ -122,6 +133,26 @@ class TelemetryStorage:
                     ON events(timestamp_ms, row_id);
                 CREATE INDEX IF NOT EXISTS events_site_kind_channel_time
                     ON events(site_id, kind, channel_id, timestamp_ms);
+                CREATE TABLE IF NOT EXISTS snapshot_cameras (
+                    site_id TEXT NOT NULL,
+                    camera_id INTEGER NOT NULL CHECK(camera_id BETWEEN 1 AND 4096),
+                    PRIMARY KEY(site_id, camera_id),
+                    FOREIGN KEY(site_id) REFERENCES sites(site_id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS snapshot_attempts (
+                    row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    site_id TEXT NOT NULL,
+                    camera_id INTEGER NOT NULL CHECK(camera_id BETWEEN 1 AND 4096),
+                    timestamp_ms INTEGER NOT NULL,
+                    success INTEGER NOT NULL CHECK(success IN (0, 1)),
+                    latency_ms REAL NOT NULL CHECK(latency_ms >= 0),
+                    error_code TEXT,
+                    logical_bytes INTEGER NOT NULL CHECK(logical_bytes > 0),
+                    FOREIGN KEY(site_id, camera_id) REFERENCES snapshot_cameras(site_id, camera_id)
+                        ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS snapshot_attempts_site_camera_time
+                    ON snapshot_attempts(site_id, camera_id, timestamp_ms, row_id);
                 """
             )
 
@@ -148,6 +179,13 @@ class TelemetryStorage:
             raise CapacityExceeded("physical_capacity_limit_exceeded")
 
     @staticmethod
+    def _checkpoint_wal(connection: sqlite3.Connection) -> None:
+        try:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            pass
+
+    @staticmethod
     def _event_storage(event: ValidatedEvent, site_id: str, source: str) -> tuple[str, int]:
         metrics_json = canonical_metrics_json(event.metrics)
         # Logical quota includes the variable fields plus a conservative row
@@ -168,22 +206,23 @@ class TelemetryStorage:
         )
         connection.execute(
             "DELETE FROM sites WHERE NOT EXISTS "
-            "(SELECT 1 FROM events WHERE events.site_id = sites.site_id)"
+            "(SELECT 1 FROM events WHERE events.site_id = sites.site_id) "
+            "AND NOT EXISTS (SELECT 1 FROM snapshot_cameras "
+            "WHERE snapshot_cameras.site_id = sites.site_id)"
         )
+        connection.execute("DELETE FROM snapshot_attempts WHERE timestamp_ms < ?", (cutoff_ms,))
         return cursor.rowcount
 
     @staticmethod
     def _logical_usage(connection: sqlite3.Connection, site_id: str | None = None) -> int:
-        if site_id is None:
-            row = connection.execute(
-                "SELECT COALESCE(SUM(logical_bytes), 0) AS value FROM events"
-            ).fetchone()
-        else:
-            row = connection.execute(
-                "SELECT COALESCE(SUM(logical_bytes), 0) AS value "
-                "FROM events WHERE site_id = ?",
-                (site_id,),
-            ).fetchone()
+        where = "" if site_id is None else " WHERE site_id = ?"
+        params: tuple[Any, ...] = () if site_id is None else (site_id,)
+        row = connection.execute(
+            "SELECT COALESCE(SUM(logical_bytes), 0) AS value FROM ("
+            "SELECT logical_bytes FROM events" + where + " UNION ALL "
+            "SELECT logical_bytes FROM snapshot_attempts" + where + ")",
+            params + params,
+        ).fetchone()
         return int(row["value"])
 
     @staticmethod
@@ -195,23 +234,165 @@ class TelemetryStorage:
         where = "WHERE site_id = ?" if site_id is not None else ""
         params: tuple[Any, ...] = (site_id,) if site_id is not None else ()
         rows = connection.execute(
-            f"SELECT row_id, logical_bytes FROM events {where} "
-            "ORDER BY timestamp_ms ASC, row_id ASC",
-            params,
+            "SELECT table_name, row_id, logical_bytes FROM ("
+            f"SELECT 'events' AS table_name, row_id, timestamp_ms, logical_bytes FROM events {where} "
+            "UNION ALL "
+            f"SELECT 'snapshot_attempts' AS table_name, row_id, timestamp_ms, logical_bytes FROM snapshot_attempts {where}"
+            ") ORDER BY timestamp_ms ASC, row_id ASC",
+            params + params,
         ).fetchall()
-        selected: list[int] = []
+        selected: list[tuple[str, int]] = []
         reclaimed = 0
         for row in rows:
-            selected.append(int(row["row_id"]))
+            selected.append((str(row["table_name"]), int(row["row_id"])))
             reclaimed += int(row["logical_bytes"])
             if reclaimed >= required_bytes:
                 break
         if reclaimed < required_bytes:
             raise CapacityExceeded("capacity_limit_exceeded")
-        connection.executemany(
-            "DELETE FROM events WHERE row_id = ?", ((row_id,) for row_id in selected)
-        )
+        for table_name, row_id in selected:
+            connection.execute(f"DELETE FROM {table_name} WHERE row_id = ?", (row_id,))
         return len(selected)
+
+    def register_snapshot_camera(
+        self, site_id: str, camera_id: int, display_name: str, *, now_ms: int | None = None
+    ) -> None:
+        """Explicit, metadata-only registry used to distinguish 404 from 503."""
+        validate_site_id(site_id)
+        validate_camera_id(camera_id)
+        display_name = validate_display_name(display_name)
+        now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute(
+                    "INSERT INTO sites(site_id, display_name, last_seen_ms) VALUES(?, ?, ?) "
+                    "ON CONFLICT(site_id) DO UPDATE SET display_name=excluded.display_name",
+                    (site_id, display_name, now_ms),
+                )
+                connection.execute(
+                    "INSERT OR IGNORE INTO snapshot_cameras(site_id, camera_id) VALUES(?, ?)",
+                    (site_id, camera_id),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def snapshot_camera_exists(self, site_id: str, camera_id: int) -> bool:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM snapshot_cameras WHERE site_id = ? AND camera_id = ?",
+                (site_id, camera_id),
+            ).fetchone()
+        return row is not None
+
+    def snapshot_cameras(self, site_id: str) -> list[dict[str, Any]]:
+        """Return only registered camera metadata, never snapshot storage details."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT camera_id FROM snapshot_cameras WHERE site_id = ? ORDER BY camera_id",
+                (site_id,),
+            ).fetchall()
+            return [{"camera_id": int(row["camera_id"])} for row in rows]
+
+    def latest_snapshot_attempt(
+        self, site_id: str, camera_id: int
+    ) -> dict[str, Any] | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT timestamp_ms, success, latency_ms, error_code FROM snapshot_attempts "
+                "WHERE site_id = ? AND camera_id = ? "
+                "ORDER BY timestamp_ms DESC, row_id DESC LIMIT 1",
+                (site_id, camera_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "timestamp": _iso(int(row["timestamp_ms"])),
+            "status": "success" if bool(row["success"]) else "failure",
+            "latency_ms": float(row["latency_ms"]),
+            "error_code": row["error_code"],
+        }
+
+    def record_snapshot_attempt(
+        self, site_id: str, camera_id: int, *, success: bool, timestamp_ms: int,
+        latency_ms: float, error_code: str | None = None, now_ms: int | None = None,
+    ) -> None:
+        validate_site_id(site_id)
+        validate_camera_id(camera_id)
+        if (
+            type(success) is not bool
+            or type(timestamp_ms) is not int
+            or type(latency_ms) not in {int, float}
+            or not math.isfinite(float(latency_ms))
+            or not 0 <= latency_ms <= MAX_SNAPSHOT_LATENCY_MS
+        ):
+            raise ValueError("invalid_snapshot_attempt")
+        if success:
+            if error_code is not None:
+                raise ValueError("successful_attempt_has_error")
+        else:
+            validate_error_code(error_code)
+        logical_bytes = 96 + len(site_id.encode()) + len(error_code or "")
+        now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+        if timestamp_ms > now_ms + self.future_skew_seconds * 1000:
+            raise InvalidEventTimestamp("snapshot_attempt_too_far_in_future")
+        cutoff_ms = now_ms - self.retention_seconds * 1000
+        if timestamp_ms < cutoff_ms:
+            return
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._prune_expired(connection, cutoff_ms)
+                registered = connection.execute(
+                    "SELECT 1 FROM snapshot_cameras WHERE site_id = ? AND camera_id = ?",
+                    (site_id, camera_id),
+                ).fetchone()
+                if registered is None:
+                    raise KeyError("unknown_snapshot_camera")
+                if logical_bytes > self.site_limit_bytes or logical_bytes > self.global_limit_bytes:
+                    raise CapacityExceeded("snapshot_attempt_exceeds_capacity_limit")
+                self._check_physical_preflight(logical_bytes)
+                self._delete_oldest(
+                    connection, self._logical_usage(connection, site_id) + logical_bytes - self.site_limit_bytes,
+                    site_id=site_id,
+                )
+                if self._logical_usage(connection) + logical_bytes > self.global_limit_bytes:
+                    raise CapacityExceeded("global_logical_capacity_limit_exceeded")
+                connection.execute(
+                    "INSERT INTO snapshot_attempts(site_id, camera_id, timestamp_ms, success, latency_ms, error_code, logical_bytes) "
+                    "VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    (site_id, camera_id, timestamp_ms, int(success), float(latency_ms), error_code, logical_bytes),
+                )
+                self._check_physical_postwrite()
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                self._checkpoint_wal(connection)
+                raise
+
+    def snapshot_statistics(self, site_id: str, camera_id: int | None = None, *, now_ms: int | None = None) -> dict[str, dict[str, float | int | None]]:
+        now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+        windows = {"1h": 60 * 60 * 1000, "24h": 24 * 60 * 60 * 1000, "7d": 7 * 24 * 60 * 60 * 1000}
+        result: dict[str, dict[str, float | int | None]] = {}
+        with self._lock, self._connect() as connection:
+            for label, window_ms in windows.items():
+                clauses = ["site_id = ?", "timestamp_ms >= ?"]
+                params: list[Any] = [site_id, now_ms - window_ms]
+                if camera_id is not None:
+                    clauses.append("camera_id = ?")
+                    params.append(camera_id)
+                row = connection.execute(
+                    "SELECT COUNT(*) AS attempts, COALESCE(SUM(success), 0) AS successes, "
+                    "AVG(latency_ms) AS mean, AVG(latency_ms * latency_ms) AS mean_square "
+                    "FROM snapshot_attempts WHERE " + " AND ".join(clauses), params,
+                ).fetchone()
+                attempts = int(row["attempts"])
+                mean = None if attempts == 0 else float(row["mean"])
+                variance = 0.0 if mean is None else max(0.0, float(row["mean_square"]) - mean * mean)
+                result[label] = {"attempts": attempts, "success_rate": None if not attempts else int(row["successes"]) / attempts, "latency_mean_ms": mean, "latency_population_stddev_ms": variance ** 0.5 if mean is not None else None}
+        return result
 
     def ingest(self, batch: ValidatedBatch, *, now_ms: int | None = None) -> IngestResult:
         """Atomically deduplicate, prune and insert one validated batch."""
@@ -393,7 +574,10 @@ class TelemetryStorage:
                 }
                 for row in connection.execute(
                     "SELECT sites.site_id, sites.display_name, sites.last_seen_ms, "
-                    "COALESCE(SUM(events.logical_bytes), 0) AS logical_bytes, "
+                    "COALESCE((SELECT SUM(logical_bytes) FROM events "
+                    "WHERE events.site_id = sites.site_id), 0) + "
+                    "COALESCE((SELECT SUM(logical_bytes) FROM snapshot_attempts "
+                    "WHERE snapshot_attempts.site_id = sites.site_id), 0) AS logical_bytes, "
                     "COUNT(events.row_id) AS event_count FROM sites "
                     "LEFT JOIN events ON events.site_id = sites.site_id "
                     "GROUP BY sites.site_id ORDER BY sites.site_id"

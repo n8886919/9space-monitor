@@ -1,5 +1,5 @@
 name: 9Space Snapshot Addon
-version: "0.3.3"
+version: "0.3.4"
 slug: 9space_snapshot_addon
 description: >-
   Monorepo development instance of the 9Space local API. Adds /healthz and

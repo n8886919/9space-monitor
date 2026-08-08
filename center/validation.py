@@ -253,6 +253,26 @@ def _looks_like_forbidden_string(value: str) -> bool:
     return False
 
 
+def validate_display_name(value: Any) -> str:
+    """Validate Center site display metadata for every persistence path."""
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value) > MAX_DISPLAY_NAME_CHARS
+        or any(ord(char) < 32 for char in value)
+        or _looks_like_forbidden_string(value)
+    ):
+        raise TelemetryValidationError("invalid_display_name")
+    return value.strip()
+
+
+def validate_error_code(value: Any) -> str:
+    """Validate sanitized, programmatic error codes outside telemetry ingest."""
+    if not isinstance(value, str) or not _CODE_RE.fullmatch(value) or _looks_like_forbidden_string(value):
+        raise TelemetryValidationError("invalid_error_code")
+    return value
+
+
 def _validate_metric(key: Any, value: Any) -> bool | int | float | str | None:
     if not isinstance(key, str) or key not in ALLOWED_METRIC_KEYS:
         raise TelemetryValidationError("metric_not_allowlisted")
@@ -317,15 +337,7 @@ def validate_batch(payload: Any) -> ValidatedBatch:
         or _looks_like_forbidden_string(site_id)
     ):
         raise TelemetryValidationError("invalid_site_id")
-    display_name = payload["display_name"]
-    if (
-        not isinstance(display_name, str)
-        or not display_name.strip()
-        or len(display_name) > MAX_DISPLAY_NAME_CHARS
-        or any(ord(char) < 32 for char in display_name)
-        or _looks_like_forbidden_string(display_name)
-    ):
-        raise TelemetryValidationError("invalid_display_name")
+    display_name = validate_display_name(payload["display_name"])
     source = payload["source"]
     if source not in {"addon", "integration"}:
         raise TelemetryValidationError("invalid_source")
@@ -376,7 +388,7 @@ def validate_batch(payload: Any) -> ValidatedBatch:
             )
         )
 
-    return ValidatedBatch(site_id, display_name.strip(), source, tuple(events))
+    return ValidatedBatch(site_id, display_name, source, tuple(events))
 
 
 def validate_site_id(site_id: str) -> str:
