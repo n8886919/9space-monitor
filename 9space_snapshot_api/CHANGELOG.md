@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.5 - 2026-08-08
+
+- Added bounded, metadata-only 24-hour recording interval aggregates and
+  allowlisted producer health telemetry for Center.
+
 ## 0.3.4 - 2026-08-08
 
 - Added site-configured, runtime-bounded snapshot concurrency from `1` to `8`.

@@ -12,7 +12,34 @@ import unittest
 
 from center.app import create_app
 from center.storage import TelemetryStorage
-from center.validation import MAX_BODY_BYTES
+from center.validation import MAX_BODY_BYTES, validate_batch
+
+
+NOW_MS = int(datetime(2026, 8, 3, 12, tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def ping_batch(site_id: str, events: list[dict]):
+    return validate_batch(
+        {
+            "site_id": site_id,
+            "display_name": "測試站",
+            "source": "integration",
+            "events": [
+                {
+                    "event_id": hashlib.sha256(
+                        f"integration|{site_id}|ha.ping|{event['channel_id']}|{event['name']}".encode()
+                    ).hexdigest(),
+                    "timestamp": datetime.fromtimestamp(
+                        event["timestamp_ms"] / 1000, timezone.utc
+                    ).isoformat(),
+                    "kind": "ha.ping",
+                    "channel_id": event["channel_id"],
+                    "metrics": event["metrics"],
+                }
+                for event in events
+            ],
+        }
+    )
 
 
 async def asgi_request(
@@ -106,6 +133,7 @@ class CenterAppTests(unittest.TestCase):
             "/api/v1/telemetry",
             "/api/v1/sites/{site_id}/events",
             "/api/v1/sites/{site_id}/latest",
+            "/api/v1/sites/{site_id}/ping-summary",
             "/api/v1/sites/{site_id}/export.json",
             "/api/v1/sites/{site_id}/cameras/{camera_id}/snapshot",
         ):
@@ -113,6 +141,33 @@ class CenterAppTests(unittest.TestCase):
         serialized = str(self.app.openapi()).lower()
         self.assertIn("image/jpeg", serialized)
         self.assertNotIn("application/octet-stream", serialized)
+
+    def test_ping_summary_is_sanitized_and_site_scoped(self) -> None:
+        storage = self.app.state.storage
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        storage.ingest(
+            ping_batch("chengde", [{"name": "sample", "timestamp_ms": now_ms, "channel_id": 7, "metrics": {"available": True, "rtt_ms": 12.5, "packet_loss_percent": 0.0}}]),
+            now_ms=now_ms,
+        )
+        storage.ingest(
+            ping_batch("other-site", [{"name": "other", "timestamp_ms": now_ms, "channel_id": 7, "metrics": {"rtt_ms": 999.0}}]),
+            now_ms=now_ms,
+        )
+        status, _headers, body = self.request("GET", "/api/v1/sites/chengde/ping-summary")
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertEqual(result["site_id"], "chengde")
+        self.assertEqual(result["channels"][0]["channel_id"], 7)
+        self.assertEqual(
+            result["channels"][0]["current"],
+            {"available": True, "state": None, "rtt_ms": 12.5, "packet_loss_percent": 0.0},
+        )
+        self.assertEqual(result["channels"][0]["windows"]["1h"]["rtt_ms"], {"mean": 12.5, "count": 1})
+        encoded = json.dumps(result).lower()
+        for forbidden in ("entity_id", "credential", "password", "rtsp", "http://", "jpeg", "raw_payload"):
+            self.assertNotIn(forbidden, encoded)
+        status, _headers, _body = self.request("GET", "/api/v1/sites/password-site/ping-summary")
+        self.assertEqual(status, 422)
 
     def test_body_bound_without_content_length_rejects_one_giant_chunk(self) -> None:
         status, _headers, _body = self.request(

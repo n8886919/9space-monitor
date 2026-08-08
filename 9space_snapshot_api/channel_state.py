@@ -8,9 +8,9 @@ themselves. Background loops in ``background.py`` are the only writers.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, Mapping, Optional
 
 
 def _iso(ts_ms: int) -> str:
@@ -42,6 +42,7 @@ class ChannelState:
     last_recording: Optional[str] = None
     recording_checked_at_ms: Optional[int] = None
     recording_error: Optional[str] = None
+    recording_metrics: dict[str, int | float | bool] = field(default_factory=dict)
 
     def _checked_at_ms(self) -> Optional[int]:
         candidates = [
@@ -121,6 +122,7 @@ class ChannelStateStore:
         last_recording: Optional[str],
         checked_at_ms: int,
         error_code: Optional[str],
+        metrics: Mapping[str, int | float | bool] | None = None,
     ) -> None:
         async with self._lock:
             state = self._get_or_create(channel_id)
@@ -129,6 +131,7 @@ class ChannelStateStore:
             state.last_recording = last_recording
             state.recording_checked_at_ms = checked_at_ms
             state.recording_error = error_code
+            state.recording_metrics = dict(metrics) if recording_query_ok and metrics else {}
 
     async def mark_live_internal_error(
         self, channel_id: int, *, checked_at_ms: int, error_code: str = "internal_error"
@@ -154,6 +157,7 @@ class ChannelStateStore:
             state.last_recording = None
             state.recording_checked_at_ms = checked_at_ms
             state.recording_error = error_code
+            state.recording_metrics = {}
 
     def snapshot(self, channel_id: int) -> dict:
         """Read the latest known state for one channel (non-blocking,
@@ -184,6 +188,7 @@ class ChannelStateStore:
                 "recording_recent": state.recording_recent,
                 "last_recording": state.last_recording,
                 "error_code": state.recording_error,
+                "metrics": dict(state.recording_metrics),
             },
         }
 

@@ -72,10 +72,18 @@ docker compose --env-file center/.env -f center/compose.yaml up -d --build
 - `GET /api/v1/sites`
 - `GET /api/v1/sites/{site_id}/events?after_cursor=0&limit=1000`
 - `GET /api/v1/sites/{site_id}/latest`
+- `GET /api/v1/sites/{site_id}/ping-summary`
 - `GET /api/v1/sites/{site_id}/export.json?after_cursor=0&limit=1000`
 
 Export 與 query 共用相同 sanitized rows，最多 1000 筆一頁；用
 `next_cursor` 取得下一頁。沒有影像 export。
+
+Ping summary 以 event timestamp 分別計算每個 site/channel 的 `1h` 與 `24h`
+window；只輸出 allowlisted `rtt_ms` 與 `packet_loss_percent` 的 sample `mean`／
+`count`，無 sample 時 mean 為 `null`、count 為 `0`。每個 channel 的 `current` 對
+`available`、`state`、`rtt_ms`、`packet_loss_percent` 個別取最新合法值，因此不會被
+generic latest event 的去重行為遺失。Response 不含
+entity ID、credentials、URL、JPEG 或 raw payload。
 
 ## Retention與容量
 

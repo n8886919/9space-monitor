@@ -95,6 +95,7 @@ async def _recording_query_one(
         last_recording=result["last_recording"],
         checked_at_ms=int(time.time() * 1000),
         error_code=result["error_code"],
+        metrics=result.get("metrics"),
     )
 
 

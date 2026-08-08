@@ -96,7 +96,12 @@ ALLOWED_METRIC_KEYS = frozenset(
         "rtt_ms",
         "setup_status",
         "snapshot_latency_ms",
+        "snapshot_max_concurrency",
         "source_version",
+        "telemetry_queue_capacity",
+        "telemetry_queue_depth",
+        "producer_state",
+        "center_reachable",
         "state",
         "storage_free_gb",
         "storage_used_percent",
@@ -120,9 +125,13 @@ _BOOL_METRICS = {
     "recording_recent",
     "rpi_throttled",
     "truncated",
+    "center_reachable",
 }
 _INT_RANGES = {
     "channel_count": (0, 4096),
+    "snapshot_max_concurrency": (1, 8),
+    "telemetry_queue_capacity": (1, 100),
+    "telemetry_queue_depth": (0, 100),
     "disconnect_count_24h": (0, 1_000_000),
     "dropped_events": (0, 10**12),
     "file_count_24h": (0, 10_000_000),
@@ -185,6 +194,7 @@ _STATE_VALUES = frozenset(
         "unknown",
     }
 )
+_PRODUCER_STATE_VALUES = frozenset({"running", "stopped"})
 _UNIT_VALUES = frozenset(
     {"%", "C", "GB", "MB", "Mbps", "V", "W", "events", "files", "gaps", "hours", "ms", "s"}
 )
@@ -313,6 +323,9 @@ def _validate_metric(key: Any, value: Any) -> bool | int | float | str | None:
     elif key == "state":
         if value not in _STATE_VALUES:
             raise TelemetryValidationError("invalid_state")
+    elif key == "producer_state":
+        if value not in _PRODUCER_STATE_VALUES:
+            raise TelemetryValidationError("invalid_producer_state")
     elif key == "unit":
         if value not in _UNIT_VALUES:
             raise TelemetryValidationError("invalid_unit")

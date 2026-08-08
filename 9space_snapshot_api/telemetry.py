@@ -54,6 +54,20 @@ _IPV6_CANDIDATE_RE = re.compile(
 )
 _BASE64_RE = re.compile(r"^[A-Za-z0-9+/]{80,}={0,2}$")
 _MAX_CHANNEL_ID = 4096
+_RECORDING_INT_METRICS = frozenset(
+    {"file_count_24h", "valid_file_count_24h", "invalid_file_count_24h", "gap_count_24h", "page_count"}
+)
+_RECORDING_NUMBER_METRICS = frozenset(
+    {"recording_coverage_24h_pct", "gap_total_seconds_24h", "largest_gap_seconds_24h", "last_recording_age_hours", "query_duration_ms"}
+)
+_RECORDING_BOOL_METRICS = frozenset({"truncated"})
+_HEALTH_INT_LIMITS = {
+    "snapshot_max_concurrency": (1, 8),
+    "telemetry_queue_depth": (0, MAX_QUEUE_MAX_BATCHES),
+    "telemetry_queue_capacity": (1, MAX_QUEUE_MAX_BATCHES),
+}
+_HEALTH_STATES = frozenset({"running", "stopped"})
+_VERSION_RE = re.compile(r"^[0-9]{1,4}(?:\.[0-9]{1,4}){1,3}(?:[-+][A-Za-z0-9.-]{1,32})?$")
 
 
 class CenterClient(Protocol):
@@ -162,6 +176,44 @@ def _safe_timestamp(value: object) -> str | None:
     return value
 
 
+def _safe_recording_metrics(value: object) -> dict[str, int | float | bool]:
+    """Filter query-derived aggregates before they can reach the queue."""
+    if not isinstance(value, Mapping):
+        return {}
+    safe: dict[str, int | float | bool] = {}
+    for key, metric in value.items():
+        if key in _RECORDING_INT_METRICS and type(metric) is int and 0 <= metric <= 10_000_000:
+            safe[key] = metric
+        elif key in _RECORDING_NUMBER_METRICS and type(metric) in {int, float}:
+            numeric = float(metric)
+            upper = 100.0 if key == "recording_coverage_24h_pct" else (86_400.0 if "gap" in key else 3_600_000.0 if key == "query_duration_ms" else 100_000.0)
+            if 0.0 <= numeric <= upper:
+                safe[key] = metric
+        elif key in _RECORDING_BOOL_METRICS and type(metric) is bool:
+            safe[key] = metric
+    return safe
+
+
+def _safe_producer_health(value: object) -> dict[str, str | int | bool | None]:
+    if not isinstance(value, Mapping):
+        return {}
+    safe: dict[str, str | int | bool | None] = {}
+    version = value.get("source_version")
+    if isinstance(version, str) and _VERSION_RE.fullmatch(version):
+        safe["source_version"] = version
+    for key, (lower, upper) in _HEALTH_INT_LIMITS.items():
+        metric = value.get(key)
+        if type(metric) is int and lower <= metric <= upper:
+            safe[key] = metric
+    state = value.get("producer_state")
+    if state in _HEALTH_STATES:
+        safe["producer_state"] = state
+    reachable = value.get("center_reachable")
+    if type(reachable) is bool or reachable is None:
+        safe["center_reachable"] = reachable
+    return safe
+
+
 class NvrTelemetryModel:
     """Create strictly allowlisted NVR events from in-memory channel state."""
 
@@ -224,6 +276,7 @@ class NvrTelemetryModel:
         *,
         now_ms: int,
         dropped_events: int,
+        producer_health: Mapping[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         for channel_id in sorted(channel_states):
@@ -238,18 +291,21 @@ class NvrTelemetryModel:
             }
             events.append(self._event(site_id, "nvr.live", channel_id, now_ms, live_metrics))
             recent = recording_state.get("recording_recent")
+            recording_metrics: dict[str, Any] = {
+                "recording_query_ok": bool(recording_state.get("recording_query_ok")),
+                "recording_recent": recent if type(recent) is bool else None,
+                "last_recording": _safe_timestamp(recording_state.get("last_recording")),
+                "error_code": _safe_error(recording_state.get("error_code")),
+            }
+            if recording_metrics["recording_query_ok"]:
+                recording_metrics.update(_safe_recording_metrics(recording_state.get("metrics")))
             events.append(
                 self._event(
                     site_id,
                     "nvr.recording",
                     channel_id,
                     now_ms,
-                    {
-                        "recording_query_ok": bool(recording_state.get("recording_query_ok")),
-                        "recording_recent": recent if type(recent) is bool else None,
-                        "last_recording": _safe_timestamp(recording_state.get("last_recording")),
-                        "error_code": _safe_error(recording_state.get("error_code")),
-                    },
+                    recording_metrics,
                 )
             )
         events.append(
@@ -258,7 +314,11 @@ class NvrTelemetryModel:
                 "producer.health",
                 None,
                 now_ms,
-                {"channel_count": len(channel_states), "dropped_events": dropped_events},
+                {
+                    "channel_count": len(channel_states),
+                    "dropped_events": dropped_events,
+                    **_safe_producer_health(producer_health),
+                },
             )
         )
         return events
@@ -291,6 +351,7 @@ class TelemetryProducer:
         self._stopping_tasks: set[asyncio.Task[None]] = set()
         self._stopping = False
         self.dropped_events = 0
+        self.center_reachable: bool | None = None
 
     def start(self) -> None:
         if self._task is None:
@@ -308,6 +369,18 @@ class TelemetryProducer:
             return False
         return True
 
+    @property
+    def queue_depth(self) -> int:
+        return self._queue.qsize()
+
+    @property
+    def queue_capacity(self) -> int:
+        return self._queue.maxsize
+
+    @property
+    def state(self) -> str:
+        return "running" if self._task is not None and not self._task.done() else "stopped"
+
     async def _run(self) -> None:
         while not self._stopping:
             events = await self._queue.get()
@@ -322,7 +395,9 @@ class TelemetryProducer:
                     self._client.post(self._center_url, payload, self._timeout_seconds),
                     timeout=self._timeout_seconds,
                 )
+                self.center_reachable = True
             except Exception:  # noqa: BLE001 - Center errors must stay isolated
+                self.center_reachable = False
                 self.dropped_events += len(events)
             finally:
                 self._queue.task_done()

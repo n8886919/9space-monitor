@@ -202,6 +202,20 @@ def create_app(
             "events": await call_sync(request, get_storage(request).latest, site_id),
         }
 
+    @app.get("/api/v1/sites/{site_id}/ping-summary")
+    async def ping_summary(request: Request, site_id: str) -> dict:
+        """Read-only 1h/24h Ping rollups for one Center site."""
+        try:
+            validate_site_id(site_id)
+        except TelemetryValidationError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from None
+        return {
+            "site_id": site_id,
+            "channels": await call_sync(
+                request, get_storage(request).ping_summary, site_id
+            ),
+        }
+
     @app.get("/api/v1/dashboard/summary")
     async def dashboard_summary(request: Request) -> JSONResponse:
         """Aggregate already-sanitized metadata for the local static UI."""

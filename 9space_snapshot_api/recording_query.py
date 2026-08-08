@@ -46,6 +46,9 @@ MAX_FILES = 2000
 RECENT_WINDOW_HOURS = 24
 MAX_CGI_RESPONSE_BYTES = 1 * 1024 * 1024
 FIND_NEXT_FILE_COUNT = 100
+# Dahua commonly returns adjacent short segments.  Treat a gap of one minute
+# or less as continuous recording, avoiding a false outage at segment seams.
+MIN_RECORDING_GAP_SECONDS = 60
 # Fail-closed cap on how many response reads are permitted when urllib's
 # underlying socket cannot be located/shortened (see ``_set_response_timeout``
 # below): without that ability a slow, malicious peer could otherwise trickle
@@ -110,6 +113,69 @@ def _latest_recent(
         latest = max(latest, item_end) if latest else item_end
     recent = latest is not None and (end - latest) <= timedelta(hours=RECENT_WINDOW_HOURS)
     return latest, recent
+
+
+def recording_interval_metrics(
+    files: list[dict[str, str]], start: datetime, end: datetime, *, truncated: bool
+) -> dict[str, int | float | bool]:
+    """Derive bounded 24-hour recording metadata from one query's files.
+
+    Raw filenames and CGI bodies never leave this function.  Invalid or
+    outside-window intervals are counted but cannot inflate coverage.
+    """
+    intervals: list[tuple[datetime, datetime]] = []
+    invalid = 0
+    for item in files:
+        try:
+            item_start = max(start, _parse_time(item["StartTime"]))
+            item_end = min(end, _parse_time(item["EndTime"]))
+        except (KeyError, ValueError):
+            invalid += 1
+            continue
+        if item_end <= item_start:
+            invalid += 1
+            continue
+        intervals.append((item_start, item_end))
+
+    intervals.sort()
+    merged: list[list[datetime]] = []
+    for item_start, item_end in intervals:
+        if (
+            not merged
+            or (item_start - merged[-1][1]).total_seconds()
+            > MIN_RECORDING_GAP_SECONDS
+        ):
+            merged.append([item_start, item_end])
+        elif item_end > merged[-1][1]:
+            merged[-1][1] = item_end
+
+    covered_seconds = sum(
+        (item_end - item_start).total_seconds() for item_start, item_end in merged
+    )
+    window_seconds = max(1.0, (end - start).total_seconds())
+    gaps = [
+        (merged[0][0] - start).total_seconds()
+    ] if merged else [window_seconds]
+    if merged:
+        gaps.extend(
+            (next_start - previous_end).total_seconds()
+            for (_previous_start, previous_end), (next_start, _next_end) in zip(
+                merged, merged[1:]
+            )
+            if (next_start - previous_end).total_seconds() > MIN_RECORDING_GAP_SECONDS
+        )
+        gaps.append((end - merged[-1][1]).total_seconds())
+    gaps = [gap for gap in gaps if gap > MIN_RECORDING_GAP_SECONDS]
+    return {
+        "file_count_24h": len(files),
+        "valid_file_count_24h": len(intervals),
+        "invalid_file_count_24h": invalid,
+        "recording_coverage_24h_pct": covered_seconds * 100 / window_seconds,
+        "gap_count_24h": len(gaps),
+        "gap_total_seconds_24h": float(sum(gaps)),
+        "largest_gap_seconds_24h": float(max(gaps, default=0.0)),
+        "truncated": truncated,
+    }
 
 
 def _classify_error(exc: BaseException, stage: str) -> str:
@@ -239,6 +305,7 @@ class DahuaRecordingClient:
         always queries NVR channel 1 (no 0/1-based remapping).
         """
         deadline = time.monotonic() + RECORDING_OPERATION_TIMEOUT
+        query_started = time.monotonic()
         now = datetime.now(LOCAL_TZ)
         start = now - timedelta(hours=RECENT_WINDOW_HOURS)
         object_id = ""
@@ -268,6 +335,8 @@ class DahuaRecordingClient:
                 raise ValueError("find_file_failed")
 
             files: list[dict[str, str]] = []
+            page_count = 0
+            truncated = False
             while len(files) < MAX_FILES:
                 self._remaining_timeout(deadline)
                 stage = "find_next_file"
@@ -279,17 +348,28 @@ class DahuaRecordingClient:
                     ),
                     FIND_NEXT_FILE_COUNT,
                 )
+                page_count += 1
                 files.extend(page)
                 if len(page) < FIND_NEXT_FILE_COUNT:
                     break
+            else:
+                truncated = True
 
             self._remaining_timeout(deadline)
             latest, recent = _latest_recent(files, start, now)
+            metrics = recording_interval_metrics(files, start, now, truncated=truncated)
+            metrics["page_count"] = page_count
+            metrics["query_duration_ms"] = (time.monotonic() - query_started) * 1000
+            if latest is not None:
+                metrics["last_recording_age_hours"] = max(
+                    0.0, (now - latest).total_seconds() / 3600
+                )
             return {
                 "recording_query_ok": True,
                 "recording_recent": recent,
                 "last_recording": latest.isoformat() if latest else None,
                 "error_code": None,
+                "metrics": metrics,
             }
         except HTTPError as err:
             error_code = _classify_error(err, stage)
@@ -321,6 +401,7 @@ class DahuaRecordingClient:
             "recording_recent": None,
             "last_recording": None,
             "error_code": error_code,
+            "metrics": {},
         }
 
 

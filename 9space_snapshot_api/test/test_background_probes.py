@@ -189,6 +189,24 @@ class ChannelStoreTests(unittest.TestCase):
         self.assertIsNone(state["last_recording"])
         self.assertEqual(state["error_code"], "internal_error")
 
+    def test_recording_failure_clears_previous_telemetry_aggregates(self) -> None:
+        store = ChannelStateStore()
+
+        async def run() -> None:
+            await store.update_recording(
+                1, recording_query_ok=True, recording_recent=True,
+                last_recording="2026-08-01T12:00:00+08:00", checked_at_ms=1_000,
+                error_code=None, metrics={"file_count_24h": 2, "truncated": False},
+            )
+            await store.update_recording(
+                1, recording_query_ok=False, recording_recent=None,
+                last_recording=None, checked_at_ms=2_000,
+                error_code="recording_query_failed", metrics={},
+            )
+
+        asyncio.run(run())
+        self.assertEqual(store.telemetry_snapshot(1)["recording"]["metrics"], {})
+
 
 class LiveProbeUnitTests(unittest.TestCase):
     """live_probe.probe_channel() itself, without FastAPI, using a fake TCP

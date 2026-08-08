@@ -31,6 +31,7 @@ OPTIONS_PATH = "/data/options.json"
 QUEUE_TIMEOUT_MS = 300
 DEFAULT_SNAPSHOT_CONCURRENCY = 1
 MAX_SNAPSHOT_CONCURRENCY = 8
+ADDON_VERSION = "0.3.5"
 
 _sem: Optional[asyncio.Semaphore] = None
 
@@ -89,6 +90,14 @@ async def _telemetry_loop() -> None:
                 channel_states,
                 now_ms=now_ms,
                 dropped_events=producer.dropped_events,
+                producer_health={
+                    "source_version": ADDON_VERSION,
+                    "snapshot_max_concurrency": _snapshot_concurrency(_load_options()),
+                    "telemetry_queue_depth": producer.queue_depth,
+                    "telemetry_queue_capacity": producer.queue_capacity,
+                    "producer_state": producer.state,
+                    "center_reachable": producer.center_reachable,
+                },
             )
             # Center accepts at most 500 events per batch.  Splitting here
             # remains non-blocking; any full queue simply drops that chunk.

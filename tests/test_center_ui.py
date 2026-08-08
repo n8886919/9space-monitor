@@ -82,25 +82,43 @@ class CenterUiTests(unittest.TestCase):
         self.assertEqual(ui_headers["content-type"], "image/jpeg")
         self.assertEqual(ui_body, b"opaque-last-good")
 
-    def test_static_client_uses_relative_safe_dom_and_visual_states(self) -> None:
+    def test_static_client_uses_relative_safe_dom_and_metadata_tables(self) -> None:
         root = os.path.join(os.path.dirname(__file__), "..", "center", "static")
         with open(os.path.join(root, "app.js"), encoding="utf-8") as handle:
             source = handle.read()
         with open(os.path.join(root, "styles.css"), encoding="utf-8") as handle:
             css = handle.read()
         self.assertIn("fetch(\"api/v1/dashboard/summary\"", source)
-        self.assertIn("encodeURIComponent(siteId)", source)
-        self.assertIn("encodeURIComponent(cameraId)", source)
+        self.assertIn("ping-summary", source)
+        self.assertIn("encodeURIComponent(site.site_id)", source)
         self.assertIn("textContent", source)
         self.assertNotIn("innerHTML", source)
         self.assertIn("last-good-snapshot", source)
+        self.assertIn('createElement("img")', source)
+        self.assertIn('["Camera", "Ping (ICMP)", "延遲/時", "丟包率/時", "延遲/日", "丟包率/日"]', source)
+        self.assertIn("NVR live / recording", source)
+        self.assertIn("snapshot attempt", source)
+        self.assertIn("latency_population_stddev_ms", source)
+        self.assertIn("invalid_file_count_24h", source)
+        self.assertIn("gap_total_seconds_24h", source)
+        self.assertIn("largest_gap_seconds_24h", source)
+        self.assertIn('liveSamples > 0', source)
+        self.assertIn('"—（無樣本）"', source)
+        self.assertNotIn('|| (site.producer_health || [])[0]', source)
+        self.assertIn("selectedSiteId !== site.site_id", source)
+        self.assertIn("last-good snapshot store", source)
+        self.assertNotIn('shown(site, "logical_limit_bytes")', source)
+        self.assertIn("不完整", source)
+        self.assertIn("無樣本", source)
+        self.assertIn("site-summary", css)
+        self.assertIn("data-table", css)
         self.assertIn("attempt-success", css)
         self.assertIn("attempt-failure", css)
         self.assertIn("placeholder", source)
         self.assertIn("setTimeout(refreshLoop, 15000)", source)
         self.assertIn("tabs.replaceChildren()", source)
         self.assertIn("selectedSiteId", source)
-        self.assertIn("Producer health queue/drop", source)
+        self.assertNotIn("JSON.stringify", source)
 
     def test_dashboard_index_and_static_asset_are_served(self) -> None:
         async def direct_sync(function, *args, **kwargs):
