@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.3 - 2026-08-04
+
+- Added the bounded, memory-only M5B NVR telemetry producer for Center ingest.
+
 ## 0.3.2 - 2026-08-03
 
 - Hard-capped snapshot ffmpeg capture concurrency at one, regardless of the

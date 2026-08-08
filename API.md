@@ -5,10 +5,10 @@
 此 API 是：
 
 - Home Assistant integration 與同站點 add-on 的狀態邊界。
-- 未來 center 透過 Tailscale 呼叫各站點 local service 的基礎。
+- M5 add-on／integration 透過 Tailscale push sanitized telemetry 到 Center 的相容基礎。
 - 目前正在使用的舊 snapshot client 的相容介面。
 
-本階段不設計 center API，也不修改同事現有呼叫方式。
+M5 新增 Center telemetry ingest API；它與 legacy snapshot API、local integration API 分離，且不修改同事現有呼叫方式。
 
 ## 網路決策
 
@@ -22,10 +22,10 @@
 安全債務：
 
 - 公網 port forwarding 不是最終架構。
-- 未來 center 完成後，center 透過 Tailscale 呼叫 local API。
+- M5 add-on 與 integration 透過 Tailscale push telemetry 到 Center。
 - 同事固定主機只呼叫 center。
 - 同事完成切換後，移除 local API 的不必要公網 port forwarding。
-- 到該階段再決定 local API authentication，不在目前實作。
+- M5 為受控 Tailscale 內網，不新增 per-site token；Center 不得暴露至公網。
 
 ## Legacy API
 
@@ -58,7 +58,7 @@
 
 ## Minimal local API
 
-新 endpoint 只提供 integration 與未來 center 必需的資料。
+新 endpoint 只提供 integration 必需的資料；M5 Center telemetry 不從此 endpoint pull 資料。
 
 ### `GET /healthz`
 
@@ -115,8 +115,7 @@ HTTP status：`404`
 
 ### `GET /api/v1/channels/{channel_id}/snapshot`
 
-用途：供既有 client 與未來 Center/server 取得最新 JPEG；Home Assistant
-integration 不呼叫此 endpoint，也不建立 Snapshot camera entity。
+用途：供既有 client 取得最新 JPEG；Home Assistant integration 不呼叫此 endpoint，也不建立 Snapshot camera entity。M5 Center 不呼叫、傳輸或保存此 endpoint 的 JPEG。
 
 成功：
 
@@ -152,13 +151,15 @@ HTTP status：`503`
 | `checked_at` | string/null | local service 最近一次更新時間 |
 | `error_code` | string/null | 已去敏、可程式判斷的錯誤 |
 
+M5 可在 `/api/v1` 增加不破壞既有 consumer 的 optional 診斷欄位與 24 小時 aggregates，例如 live online rate、disconnect count、recording count/coverage/gap、last recording age、first RTP 與 probe duration。具體 schema 由 M5A 以測試鎖定。
+
 不在此 API 提供：
 
 - Camera Ping
 - RTT
 - Jitter
 - Packet loss
-- 24 小時在線率
+- raw Ping/RTT/Jitter/packet-loss probe
 - Camera Wi-Fi signal
 - NVR username/password
 - RTSP URL
@@ -201,20 +202,40 @@ HTTP status：`503`
 
 Snapshot 保持由 add-on demand-driven capture 與 cache 提供。Snapshot ffmpeg
 實際同時抓圖固定為 1；`max_concurrency` option 僅為既有設定相容而保留，
-不得提高 Snapshot 併發。未來由 Center/server 呼叫此 endpoint 統一抓圖。
+不得提高 Snapshot 併發。M5 Center 絕不呼叫、傳輸或保存此 endpoint 的 JPEG；未來若需統一取圖必須另案批准。
 
 ## 相容性政策
 
 - Legacy API 在同事完成 center migration 前保持不變。
 - `/api/v1` 可以增加 optional 欄位。
 - 不刪除或重新命名既有 `/api/v1` 欄位，除非同步修改 integration 並記錄 breaking change。
-- Center 尚未開發前，不加入 center-specific path、site registry 或 multi-site schema。
+- local `/api/v1` 不加入 Center-specific path、site registry 或 multi-site schema；M5 Center 使用獨立 telemetry ingest contract。
+
+## M5 Center telemetry contract
+
+Center 接收兩類 sanitized batch，皆不含 JPEG、credentials、Authorization、完整 RTSP/CGI URL、raw CGI body 或 snapshot body：
+
+1. Add-on NVR telemetry：channel live/recording 狀態、24 小時 aggregates、probe/query/snapshot metadata、allowlisted Dahua diagnostics。
+2. Integration HA telemetry：allowlisted Ping、System Monitor、RPi Power、Fast.com entity states。
+
+System Monitor 的 M5 allowlist 包含 disk／memory／load／temperature，以及
+`processor_use_percent`、`last_boot`（含時區 ISO 8601）與 `uptime_seconds`（unit `s`）。
+Ping mapping 必須明確指定 Center-safe channel ID；其餘 HA metrics 的 channel ID 為 `null`。
+
+Producer 規則：
+
+- 非阻塞、短 timeout；Center 失聯不得影響 NVR probe、integration coordinator 或 HA startup。
+- producer 不保存 telemetry history 至磁碟；只保有 24 小時 RAM ring 與 bounded memory queue。
+- queue 滿或 server 不可達時允許丟棄資料，並以 sanitized counter metadata 回報。
+- Center 保存七日；單站採 logical 保守水位，並以 2 GiB 實體檔 fail-closed guard 保護主機容量。具體預設值待 Center 實作完成後以測試核對。
+- `site_id` 為穩定 ASCII identifier，display name 另存；承德原型為 `chengde`／「承德」。
 
 ## Future TODO
 
-- [ ] Center 透過 Tailscale 呼叫各站點 `/api/v1`。
-- [ ] 同事固定主機改成只呼叫 center。
-- [ ] Center 保存每個 channel 最新 snapshot、來源與 freshness。
+- [ ] Center Docker/SQLite ingest/query/export API（M5；不含 JPEG）。
+- [ ] 依每站 mapping 產生 dashboard YAML。
+- [ ] 若未來要讓同事固定主機改呼叫 Center，須另開 legacy snapshot migration；M5 telemetry Center 不代理 JPEG。
+- [ ] 若未來需要 Center snapshot 功能，須另開設計與安全審查；M5 永久不傳輸或保存 JPEG。
 - [ ] 同事完成切換後，停止直接呼叫 local legacy API。
 - [ ] 移除 local API 的不必要公網 port forwarding。
 - [ ] 評估 Tailscale ACL、service identity 或 API token。

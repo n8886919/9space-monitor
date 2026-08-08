@@ -20,9 +20,9 @@
 
 - `8122` 是獨立舊正式服務，永久禁止操作。
 - 不得對 `8122` 執行 test、restart、rebuild、reload、modify，亦不得把 `8122` 當成 integration URL。
-- 本 repository 的 monorepo add-on 版本為 `0.3.2`，host port 是 `8222`，container port 是 `8000`。
+- 本 repository 的 monorepo add-on 版本為 `0.3.3`，host port 是 `8222`，container port 是 `8000`。
 - Supervisor add-on identifier／slug 與 internal hostname 不可混用。
-- 快速路徑只適用於遠端 source 與已安裝 add-on 都已是 `0.3.2`；不得因舊 `0.3.1` endpoint 可用就跳過 add-on 部署。
+- 快速路徑只適用於遠端 source 與已安裝 add-on 都已是 `0.3.3`；不得因舊 `0.3.2` endpoint 可用就跳過 add-on 部署。
 - 任何 add-on 上傳、rebuild、restart、rollback 操作都必須再次取得使用者明確授權後才可執行。
 - 不得直接編輯 `/config/.storage/core.config_entries` 或其他 `.storage` 檔案。
 - 不得自動建立或接受帶有 `_2` 後綴的 replacement entities。
@@ -51,7 +51,7 @@ export INTEGRATION_BASE_URL="http://${ADDON_HOSTNAME}:${ADDON_CONTAINER_PORT}"
 
 變數用途必須明確區分：
 
-- `ADDON_SLUG`：只供 `ha addons ...` 指令使用。
+- `ADDON_SLUG`：只供 `ha apps ...` 指令使用。
 - `ADDON_SLUG`：必須以 Supervisor 實際輸出為準；目前觀察到的 identifier 是 `afa94ae2_9space_snapshot_addon`。
 - `ADDON_HOSTNAME`：只供 Home Assistant Core 連到 add-on container。
 - `ADDON_HOST_PORT`：只供 host-side smoke test。
@@ -87,7 +87,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" '
 
 ```bash
 ssh -p "$HA_SSH_PORT" "$REMOTE" \
-  "ha addons list | grep -i -A4 -B2 '9space\|snapshot'"
+  "ha apps list | grep -i -A4 -B2 '9space\|snapshot'"
 ```
 
 若輸出與預期不同，先停止並回報實際結果，再更新本次操作使用的 `ADDON_SLUG`。不要自行猜測。
@@ -136,10 +136,10 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 Snapshot API smoke test 是 add-on API 與未來 Center/server 的 contract 驗證；integration 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
 
-只有遠端 source 和 Supervisor 已安裝版本都明確為 `0.3.2`，且以下唯讀檢查都正常時，才可跳過 add-on 上傳、rebuild 與 restart：
+只有遠端 source 和 Supervisor 已安裝版本都明確為 `0.3.3`，且以下唯讀檢查都正常時，才可跳過 add-on 上傳、rebuild 與 restart：
 
-- `${ADDON_REMOTE_DIR}/config.yaml` 的 `version: "0.3.2"`
-- `ha addons info "$ADDON_SLUG"` 顯示 version `0.3.2`
+- `${ADDON_REMOTE_DIR}/config.yaml` 的 `version: "0.3.3"`
+- `ha apps info "$ADDON_SLUG"` 顯示 version `0.3.3`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/healthz`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/camera/1`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/v1/channels`
@@ -149,8 +149,8 @@ Snapshot API smoke test 是 add-on API 與未來 Center/server 的 contract 驗�
 ```bash
 ssh -p "$HA_SSH_PORT" "$REMOTE" "
   set -eu
-  grep -Fx 'version: \"0.3.2\"' '$ADDON_REMOTE_DIR/config.yaml'
-  ha addons info '$ADDON_SLUG' | grep -Eq 'version:[[:space:]]*0\\.3\\.2([[:space:]]|\$)'
+  grep -Fx 'version: \"0.3.3\"' '$ADDON_REMOTE_DIR/config.yaml'
+  ha apps info '$ADDON_SLUG' | grep -Eq 'version:[[:space:]]*0\\.3\\.3([[:space:]]|\$)'
 "
 ```
 
@@ -228,8 +228,8 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 若以上版本 gate 與全部 smoke tests 都正常：
 
 1. 不上傳 add-on source。
-2. 不執行 `ha addons rebuild`。
-3. 不執行 `ha addons restart`。
+2. 不執行 `ha apps rebuild`。
+3. 不執行 `ha apps restart`。
 4. 確認已完成「M4 共用備份」且已有 backup path 紀錄。
 5. 直接進行 integration 部署。
 
@@ -270,7 +270,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
   fi
   mv '$ADDON_REMOTE_DIR.new' '$ADDON_REMOTE_DIR'
   rm -f /tmp/9space_snapshot_api.tgz
-  ha addons reload
+  ha apps reload
 "
 ```
 
@@ -281,12 +281,12 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 ```bash
 ssh -p "$HA_SSH_PORT" "$REMOTE" "
   set -eu
-  ha addons rebuild '$ADDON_SLUG'
-  ha addons restart '$ADDON_SLUG'
+  ha apps rebuild '$ADDON_SLUG'
+  ha apps restart '$ADDON_SLUG'
 "
 ```
 
-若目前 HA CLI 不支援 `rebuild`，不要猜替代命令；回報實際 `ha addons --help` 輸出，再決定。
+若目前 HA CLI 不支援 `rebuild`，不要猜替代命令；回報實際 `ha apps --help` 輸出，再決定。
 
 ### 3. Add-on smoke test
 
@@ -417,7 +417,7 @@ scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh \
 
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
-BACKUP_PATH="<recorded-backup-path>"; EXPECTED_VERSION="0.2.2"
+BACKUP_PATH="<recorded-backup-path>"; EXPECTED_VERSION="0.2.3"
 CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
 ARTIFACT_DIR="$BACKUP_PATH/deployment_artifacts"; REPLACED="$ARTIFACT_DIR/integration_replaced"
 test -d "$ARTIFACT_DIR"
@@ -538,7 +538,7 @@ Add-on log 命令依實際 slug：
 
 ```bash
 ssh -p "$HA_SSH_PORT" "$REMOTE" \
-  "ha addons logs '$ADDON_SLUG' | tail -n 100"
+  "ha apps logs '$ADDON_SLUG' | tail -n 100"
 ```
 
 ## Rollback
@@ -551,7 +551,7 @@ bash -n /tmp/nvr_monitor_layout_helper.sh
 scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh "$REMOTE:/tmp/nvr_monitor_layout_helper.sh"
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
-BACKUP_PATH="<recorded-backup-path>"; EXPECTED_VERSION="0.2.1"
+BACKUP_PATH="<recorded-backup-path>"; EXPECTED_VERSION="0.2.2"
 CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
 ARTIFACT_DIR="$BACKUP_PATH/deployment_artifacts"
 rollback_source="$ARTIFACT_DIR/integration_predeploy"; test -d "$rollback_source"
@@ -582,9 +582,9 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
   if [ -d '$ADDON_REMOTE_DIR.old' ]; then
     mv '$ADDON_REMOTE_DIR.old' '$ADDON_REMOTE_DIR'
   fi
-  ha addons reload
-  ha addons rebuild '$ADDON_SLUG'
-  ha addons restart '$ADDON_SLUG'
+  ha apps reload
+  ha apps rebuild '$ADDON_SLUG'
+  ha apps restart '$ADDON_SLUG'
 "
 ```
 

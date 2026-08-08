@@ -1,0 +1,14 @@
+{
+  "site_id": "chengde",
+  "display_name": "承德",
+  "channels": [
+    {"channel_id": 3, "label": "Sample East", "nvr_entities": {"live_video": "binary_sensor.sample_nvr_live_3", "recording_recent": "binary_sensor.sample_nvr_recording_3", "last_recording": "sensor.sample_nvr_last_recording_3"}, "ping": [{"entity_id": "binary_sensor.sample_ping_east", "kind": "ha.ping", "metric": "available", "unit": null, "channel_id": 3}]},
+    {"channel_id": 8, "label": "Sample West", "nvr_entities": {"live_video": "binary_sensor.sample_nvr_live_8", "recording_recent": "binary_sensor.sample_nvr_recording_8", "last_recording": "sensor.sample_nvr_last_recording_8"}, "ping": [{"entity_id": "binary_sensor.sample_ping_west", "kind": "ha.ping", "metric": "available", "unit": null, "channel_id": 8}]},
+    {"channel_id": 21, "label": "Sample Gate", "nvr_entities": {"live_video": "binary_sensor.sample_nvr_live_21", "recording_recent": "binary_sensor.sample_nvr_recording_21", "last_recording": "sensor.sample_nvr_last_recording_21"}, "ping": [{"entity_id": "binary_sensor.sample_ping_gate", "kind": "ha.ping", "metric": "available", "unit": null, "channel_id": 21}]}
+  ],
+  "diagnostics": [
+    {"entity_id": "sensor.sample_cpu", "kind": "ha.system", "metric": "processor_use_percent", "unit": "%", "channel_id": null},
+    {"entity_id": "sensor.sample_uptime", "kind": "ha.system", "metric": "uptime_seconds", "unit": "s", "channel_id": null},
+    {"entity_id": "sensor.sample_download", "kind": "ha.fastdotcom", "metric": "download_mbps", "unit": "Mbps", "channel_id": null}
+  ]
+}

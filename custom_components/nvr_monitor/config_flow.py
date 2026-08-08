@@ -42,11 +42,16 @@ from .const import (
     CONF_GROUP,
     CONF_MODEL,
     CONF_NVR_CHANNEL,
+    CONF_TELEMETRY_CENTER_URL,
+    CONF_TELEMETRY_DISPLAY_NAME,
+    CONF_TELEMETRY_MAPPING,
+    CONF_TELEMETRY_SITE_ID,
     DEFAULT_CAMERA_ONVIF_PORT,
     DEFAULT_CAMERA_RTSP_PORT,
     DOMAIN,
     SUBENTRY_TYPE_CAMERA,
 )
+from .ha_telemetry import parse_mapping_json, safe_center_url, safe_site_metadata
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,6 +76,28 @@ ADDON_SCHEMA = vol.Schema(
         ),
     }
 )
+
+TELEMETRY_SCHEMA = {
+    vol.Optional(CONF_TELEMETRY_SITE_ID): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
+    vol.Optional(CONF_TELEMETRY_DISPLAY_NAME): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
+    vol.Optional(CONF_TELEMETRY_CENTER_URL): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
+    vol.Optional(CONF_TELEMETRY_MAPPING): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT, multiline=True)),
+}
+
+
+def _telemetry_errors(data: dict[str, Any]) -> dict[str, str]:
+    keys = (CONF_TELEMETRY_SITE_ID, CONF_TELEMETRY_DISPLAY_NAME, CONF_TELEMETRY_CENTER_URL, CONF_TELEMETRY_MAPPING)
+    supplied = [data.get(key) for key in keys]
+    if not any(value not in (None, "") for value in supplied):
+        return {}
+    metadata = safe_site_metadata(data.get(CONF_TELEMETRY_SITE_ID), data.get(CONF_TELEMETRY_DISPLAY_NAME))
+    if metadata is None:
+        return {"base": "invalid_telemetry"}
+    if safe_center_url(data.get(CONF_TELEMETRY_CENTER_URL)) is None:
+        return {"base": "invalid_telemetry"}
+    if parse_mapping_json(data.get(CONF_TELEMETRY_MAPPING)) is None:
+        return {"base": "invalid_telemetry"}
+    return {}
 
 CAMERA_SCHEMA = vol.Schema(
     {
@@ -170,6 +197,15 @@ class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
         if user_input is not None:
+            errors = _telemetry_errors(user_input)
+            if errors:
+                return self.async_show_form(
+                    step_id="reconfigure",
+                    data_schema=self.add_suggested_values_to_schema(
+                        vol.Schema({**ADDON_SCHEMA.schema, **TELEMETRY_SCHEMA}), user_input
+                    ),
+                    errors=errors,
+                )
             try:
                 base_url = normalize_base_url(
                     str(user_input[CONF_ADDON_BASE_URL])
@@ -192,16 +228,21 @@ class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                         _LOGGER.error("Unexpected add-on validation error")
                         errors["base"] = "unknown"
                     else:
+                        data = {CONF_ADDON_BASE_URL: base_url}
+                        for key in TELEMETRY_SCHEMA:
+                            field = key.schema
+                            if user_input.get(field):
+                                data[field] = user_input[field]
                         return self.async_update_reload_and_abort(
                             entry,
                             title="NVR Monitor add-on",
-                            data={CONF_ADDON_BASE_URL: base_url},
+                            data=data,
                         )
 
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=self.add_suggested_values_to_schema(
-                ADDON_SCHEMA, user_input or dict(entry.data)
+                vol.Schema({**ADDON_SCHEMA.schema, **TELEMETRY_SCHEMA}), user_input or dict(entry.data)
             ),
             errors=errors,
         )

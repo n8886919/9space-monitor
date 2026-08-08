@@ -30,8 +30,8 @@
 - Integration 透過 local add-on API 取得 NVR 狀態與錄影狀態。
 - 攝影機 Ping 使用 Home Assistant Ping integration，本專案不重做。
 - 既有 `GET /api/camera/{camera_id}` 必須保持相容，直到使用者明確批准修改。
-- 現階段不開發 center，但不得破壞未來 center 呼叫 local API 的可能性。
-- 現階段沒有 API token；不要自行加入 auth flow。
+- M5 開發 Center telemetry server；Center 只處理診斷 metadata，不處理 JPEG。
+- M5 Tailscale 內網不使用 per-site token；不要自行新增公開 auth flow。
 - 不把 NVR credentials、真實站點 IP、snapshot 或完整 RTSP URL 寫入 git、tests、logs 或 diagnostics。
 
 ## 範圍限制
@@ -43,8 +43,7 @@
 - 不改 add-on slug `9space_snapshot_addon`。
 - 不改既有 host port 8122 或 container port 8000。
 - 不刪除舊 snapshot endpoint。
-- 不建立 center。
-- 不建立多站點部署。
+- 不建立多站點自動部署。
 - 不加入 GitHub Actions 部署流程。
 - 不修改 Home Assistant `.storage`。
 - 不建立自動 config-entry migration。
@@ -56,7 +55,7 @@
 
 ## 節省 token 與修改量
 
-- 一次只完成 README 的一個 milestone。
+- 一次只完成 README 的一個 bounded M5 task。
 - 先讀指定檔案，不掃描整個 repository 後再開始。
 - 不為了「更乾淨」重構無關程式。
 - 不產生本任務未要求的設計文件。
@@ -118,6 +117,7 @@ Add-on 可以負責：
 - Dahua recording query
 - NVR error mapping
 - Local HTTP API
+- 以獨立、非阻塞 worker push NVR telemetry 到 Center
 
 Add-on 不負責：
 
@@ -127,6 +127,16 @@ Add-on 不負責：
 - Center polling
 - Multi-site deployment
 - User-facing permissions
+- JPEG telemetry、JPEG upload、JPEG export 或 JPEG history
+
+## M5 Center telemetry 邊界
+
+- Center 使用 Docker/SQLite，只保存最近七天資料；單站採 logical 保守水位，並以 2 GiB 實體檔 fail-closed guard 保護主機容量。具體預設值以 Center 實作完成後的測試為準，不得宣稱 SQLite 物理檔必然等於 logical quota。
+- Add-on 與 integration producer 不得將 telemetry/history 寫入磁碟；只可使用 24 小時 RAM ring 與 bounded memory queue。Center 不可達時允許丟棄資料。
+- 永久不得保存、傳輸、匯出、fixture 化或記錄 JPEG；只允許 snapshot 成功與耗時等 metadata。
+- Add-on 只 push NVR telemetry；integration 只 push allowlisted Home Assistant Ping、System Monitor、RPi Power、Fast.com entities。
+- 每站 channel count 與 entity IDs 必須由 site mapping 手動定義；不得假設 14 channels 或 `01`～`14` 命名。
+- Dashboard 維護為 repository template，拆為 NVR/recording、Ping/network、diagnostics；不得提交真實站點 IP、credentials、影像或 `.storage`。
 
 ## 相容性規則
 
@@ -159,6 +169,14 @@ GET /api/camera/{camera_id}
 - 任務開始跨到下一 milestone。
 - 無法執行指定測試。
 - 需要公開站點 IP 或影像才能建立 fixture。
+
+## M5 快速開發與部署
+
+- 使用者已接受新 add-on/integration 暫時中斷 1–2 小時；一般 M5 task 不強制 rollback 設計或獨立 code review。
+- 只要維持 8122、舊 add-on、`.storage` 與 Home Assistant Core 的安全邊界，即可採 bounded task、相關測試、patch version 的快速修復流程。
+- 任務涉及 legacy API、安全、並發、資料庫 schema 或 Home Assistant lifecycle 時，仍需一次輕量唯讀檢查。
+- Integration restart 前仍必須執行 `ha core check`；不得為快速流程略過此檢查。
+- 每個由使用者批准的工作都應由 subagent 執行；PM 不代替 Engineer 實作。
 
 ## 長期操作規則
 

@@ -6,6 +6,7 @@
       "reconfigure_successful": "設定已更新。"
     },
     "error": {
+      "invalid_telemetry": "Telemetry 設定必須使用有效的 Center ingest URL 與明確白名單 mapping。",
       "already_configured": "此 add-on URL 已設定。",
       "cannot_connect": "無法連線到本機 add-on。",
       "invalid_response": "Add-on 回傳的資料不符合契約。",
@@ -21,8 +22,13 @@
       },
       "reconfigure": {
         "title": "修改 add-on 連線",
+        "description": "Telemetry 為選填；mapping 僅保存在此 Home Assistant config entry，絕不傳送到 Center。",
         "data": {
-          "addon_base_url": "Add-on base URL"
+          "addon_base_url": "Add-on base URL",
+          "telemetry_site_id": "Telemetry site ID",
+          "telemetry_display_name": "Telemetry 顯示名稱",
+          "telemetry_center_url": "Center telemetry ingest URL",
+          "telemetry_mapping": "Telemetry mapping JSON"
         }
       }
     }
