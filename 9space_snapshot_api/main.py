@@ -29,13 +29,15 @@ OPTIONS_PATH = "/data/options.json"
 
 # --- hard-coded queue timeout (ms): wait this long for a free ffmpeg slot, else 503 busy
 QUEUE_TIMEOUT_MS = 300
+DEFAULT_SNAPSHOT_CONCURRENCY = 1
+MAX_SNAPSHOT_CONCURRENCY = 8
 
 _sem: Optional[asyncio.Semaphore] = None
 
 # M2B review fix: live-video probing and recording queries share one
 # background concurrency slot (background.BACKGROUND_CONCURRENCY), separate
-# from the snapshot ffmpeg semaphore (_sem) above, which is hard-capped at
-# one capture regardless of the legacy max_concurrency option.
+# from the site-configurable, runtime-bounded snapshot ffmpeg semaphore
+# (_sem) above.
 _background_sem: Optional[asyncio.Semaphore] = None
 
 # M2B: in-memory per-channel state written only by the background probe
@@ -121,6 +123,14 @@ def _load_options() -> dict:
 def _opt(opts: dict, key: str, default):
     v = opts.get(key, default)
     return default if v is None else v
+
+
+def _snapshot_concurrency(opts: dict) -> int:
+    """Return a safe site option without allowing unbounded ffmpeg work."""
+    value = opts.get("max_concurrency", DEFAULT_SNAPSHOT_CONCURRENCY)
+    if type(value) is not int or value < 1:
+        return DEFAULT_SNAPSHOT_CONCURRENCY
+    return min(value, MAX_SNAPSHOT_CONCURRENCY)
 
 
 def _build_rtsp_url(opts: dict, camera_id: str) -> str:
@@ -239,10 +249,7 @@ async def _ffmpeg_grab_jpeg(
 @app.on_event("startup")
 async def _startup():
     global _sem, _background_sem, _live_task, _recording_task, _telemetry_task
-    # max_concurrency remains accepted in options.json for compatibility,
-    # but snapshot ffmpeg work is deliberately serialized to avoid competing
-    # with other consumers of this NVR.
-    _sem = asyncio.Semaphore(1)
+    _sem = asyncio.Semaphore(_snapshot_concurrency(_load_options()))
     # Live-video probing and recording queries share this single semaphore
     # (fixed background.BACKGROUND_CONCURRENCY, not the legacy option) so
     # total background NVR operations never exceed 1 at a time.

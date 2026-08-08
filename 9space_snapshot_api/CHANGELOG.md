@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.4 - 2026-08-08
+
+- Added site-configured, runtime-bounded snapshot concurrency from `1` to `8`.
+- Preserved the legacy snapshot API response contract.
+
 ## 0.3.3 - 2026-08-04
 
 - Added the bounded, memory-only M5B NVR telemetry producer for Center ingest.

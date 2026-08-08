@@ -23,6 +23,7 @@ async def asgi_request(
     chunks: list[bytes] | None = None,
     query: str = "",
     content_length: bool = True,
+    pathsend: bool = False,
 ) -> tuple[int, dict[str, str], bytes]:
     """Drive the ASGI app directly, including controllable request chunks."""
     chunks = list(chunks or [])
@@ -42,21 +43,27 @@ async def asgi_request(
         "client": ("127.0.0.1", 12345),
         "server": ("center.test", 80),
         "root_path": "",
+        "extensions": {"http.response.pathsend": {}} if pathsend else {},
     }
     request_index = 0
+    request_complete = False
     sent: list[dict] = []
 
     async def receive() -> dict:
-        nonlocal request_index
+        nonlocal request_index, request_complete
         if request_index < len(chunks):
             body = chunks[request_index]
             request_index += 1
+            request_complete = request_index == len(chunks)
             return {
                 "type": "http.request",
                 "body": body,
                 "more_body": request_index < len(chunks),
             }
-        return {"type": "http.request", "body": b"", "more_body": False}
+        if not request_complete:
+            request_complete = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.disconnect"}
 
     async def send(message: dict) -> None:
         sent.append(message)
@@ -90,7 +97,7 @@ class CenterAppTests(unittest.TestCase):
     def request(self, method: str, path: str, **kwargs):
         return asyncio.run(asgi_request(self.app, method, path, **kwargs))
 
-    def test_health_and_data_routes_are_registered_without_image_response(self) -> None:
+    def test_health_and_data_routes_are_registered(self) -> None:
         routes = {route.path: route for route in self.app.routes}
         self.assertEqual(
             asyncio.run(routes["/healthz"].endpoint()), {"status": "ok"}
@@ -100,10 +107,11 @@ class CenterAppTests(unittest.TestCase):
             "/api/v1/sites/{site_id}/events",
             "/api/v1/sites/{site_id}/latest",
             "/api/v1/sites/{site_id}/export.json",
+            "/api/v1/sites/{site_id}/cameras/{camera_id}/snapshot",
         ):
             self.assertIn(path, routes)
         serialized = str(self.app.openapi()).lower()
-        self.assertNotIn("image/jpeg", serialized)
+        self.assertIn("image/jpeg", serialized)
         self.assertNotIn("application/octet-stream", serialized)
 
     def test_body_bound_without_content_length_rejects_one_giant_chunk(self) -> None:
