@@ -30,7 +30,7 @@
 - Integration 透過 local add-on API 取得 NVR 狀態與錄影狀態。
 - 攝影機 Ping 使用 Home Assistant Ping integration，本專案不重做。
 - 既有 `GET /api/camera/{camera_id}` 必須保持相容，直到使用者明確批准修改。
-- M5 開發 Center telemetry server；Center 只處理診斷 metadata，不處理 JPEG。
+- M5F 起，Center 可在獨立且 bounded 的 snapshot store，為每個 site/channel 保存唯一一張最後成功 JPEG；Center 只可經該站 add-on snapshot API 取得圖片，不得直接連接 NVR。
 - M5 Tailscale 內網不使用 per-site token；不要自行新增公開 auth flow。
 - 不把 NVR credentials、真實站點 IP、snapshot 或完整 RTSP URL 寫入 git、tests、logs 或 diagnostics。
 
@@ -127,13 +127,15 @@ Add-on 不負責：
 - Center polling
 - Multi-site deployment
 - User-facing permissions
-- JPEG telemetry、JPEG upload、JPEG export 或 JPEG history
+- JPEG telemetry、JPEG history、JPEG export 或將 JPEG 寫入 telemetry store
 
 ## M5 Center telemetry 邊界
 
 - Center 使用 Docker/SQLite，只保存最近七天資料；單站採 logical 保守水位，並以 2 GiB 實體檔 fail-closed guard 保護主機容量。具體預設值以 Center 實作完成後的測試為準，不得宣稱 SQLite 物理檔必然等於 logical quota。
 - Add-on 與 integration producer 不得將 telemetry/history 寫入磁碟；只可使用 24 小時 RAM ring 與 bounded memory queue。Center 不可達時允許丟棄資料。
-- 永久不得保存、傳輸、匯出、fixture 化或記錄 JPEG；只允許 snapshot 成功與耗時等 metadata。
+- Center snapshot store 僅可保存每個 site/channel 的最後成功 JPEG，必須 bounded 且 atomic replace；不得保存 history，不得將 JPEG 寫入 telemetry SQLite、export、log、fixture 或 Git。可傳輸此最後圖片給 Center UI 與明確指定 site/channel 的 API consumer。
+- snapshot attempt metadata（成功、時間、耗時與去敏錯誤碼）可寫入 telemetry SQLite，供統計使用；JPEG bytes 不可寫入資料庫。
+- Add-on `max_concurrency` 是 site 可設定且 runtime bounded 的同時 snapshot 上限，依站點網路與 Pi 硬體決定；不得再固定 hard cap 為 1，亦不得無上限併發。
 - Add-on 只 push NVR telemetry；integration 只 push allowlisted Home Assistant Ping、System Monitor、RPi Power、Fast.com entities。
 - 每站 channel count 與 entity IDs 必須由 site mapping 手動定義；不得假設 14 channels 或 `01`～`14` 命名。
 - Dashboard 維護為 repository template，拆為 NVR/recording、Ping/network、diagnostics；不得提交真實站點 IP、credentials、影像或 `.storage`。

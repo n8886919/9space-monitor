@@ -30,7 +30,7 @@
 5. Integration 經 local add-on API 取得：
    - NVR channel 是否有實際影像
    - 最近錄影狀態
-   - 不取得 snapshot；M5 Center 不處理影像，未來若需要統一取圖須另行批准
+   - 不取得 snapshot；M5F 的 Center 可經站點 add-on snapshot API 取得每 channel 最後成功圖片，不由 integration 取圖
 6. 攝影機 Ping 與硬體資訊沿用 Home Assistant 既有 integrations；`nvr_monitor` 只讀取白名單 entity 並送往 Center。
 7. Add-on 以非阻塞 batch push 將 NVR telemetry 傳給 Center；不在 add-on 儲存 telemetry history。
 8. Center 以 Docker/SQLite 保存最近七天診斷資料，供多站點 dashboard 使用；以 logical 保守水位搭配 2 GiB 實體檔 fail-closed guard 保護主機容量，預設細節待 Center 實作完成後核對。
@@ -63,7 +63,7 @@ Center（M5）
 ├── Docker service（port 8765）
 ├── SQLite：最近七天、單站 logical 保守水位、全域 2 GiB 實體檔 fail-closed guard
 ├── 接收 add-on NVR telemetry 與 integration HA telemetry
-└── 不保存、傳輸或匯出 JPEG
+└── M5F：獨立 bounded snapshot store，每 site/channel 僅最後成功 JPEG；不進 telemetry SQLite/export/log
 ```
 
 ### M5 Center topology
@@ -72,7 +72,7 @@ Center（M5）
 各站點 add-on ──push──┐
 各站點 integration ──push──┼── Tailscale ──> Center（Docker/SQLite）
                            │
-                           └── 只保留診斷 metadata，不含影像
+                           └── 診斷 metadata；M5F snapshot 由 Center 向站點 add-on 取得並只保留最後成功圖片
 ```
 
 必須保留的 TODO：
@@ -81,7 +81,7 @@ Center（M5）
 - [x] M5B Add-on push NVR telemetry；producer 不寫 history 磁碟。
 - [x] M5C Integration push allowlisted HA Ping/System Monitor/RPi Power/Fast.com telemetry。
 - [x] M5D 依各站手動 mapping 產生 dashboard YAML（NVR、Ping、診斷三張表）。
-- [ ] 未來才決定 Center 取圖與同事 legacy client migration；M5 不傳送 JPEG。
+- [x] M5F：Center scheduler、bounded last-good snapshot store、Web UI 與 Center snapshot API 已實作並合併；不保存 history、不進 telemetry SQLite/export/log/fixtures/Git。
 
 ## M5 明確不做
 
@@ -156,7 +156,7 @@ Center（M5）
 - [x] `/api/v1/channels*` 改為只讀取 add-on 保存的最新背景結果（`channel_state.py` 的 in-memory store），不讓每次 GET 對 channel 同步執行探測。
 - [x] 背景探測共用固定單一 semaphore（併發 1）；單一 channel 失敗或逾時不影響其他 channel、也不中止整批。
 - [x] Snapshot 維持 demand-driven 與現有 cache 行為（M2A 已共用同一套 cache/capture 路徑，M2B 不重做）。
-- [x] `max_concurrency` 僅為既有 Snapshot options 相容而保留；Snapshot ffmpeg runtime hard cap 固定為 1，不能提高抓圖併發。
+- [x] M5F：`max_concurrency` 為 site 可設定、runtime bounded 的 snapshot 同時數量；不再固定 hard cap 為 1。
 - [x] Add-on 對外 response 不包含 credentials、RTSP URL、CGI request URL 或完整 ffmpeg/CGI stderr／body。
 - [x] 使用 fake-based unit tests（`test_background_probes.py`），不要求真實 NVR、Docker 或 HAOS。
 - [x] 背景 task 使用 FastAPI `startup`／`shutdown` event 管理；shutdown 會 cancel 並 await，不留孤兒 task。
@@ -189,9 +189,19 @@ M2B 已隨後在 monorepo add-on 完成實機驗證；8122 獨立舊正式 insta
 - [x] Integration push allowlisted HA telemetry：Ping、System Monitor、RPi Power、Fast.com。
 - [x] 兩種 producer 均只用 24 小時 RAM ring 與 bounded memory queue；Center 失聯時可丟棄資料，不寫 telemetry history 到磁碟。
 - [x] Center Docker/SQLite：七日 retention、單站 logical 保守水位、2 GiB 實體檔 fail-closed guard，預設 port `8765`；具體預設值待實作完成後核對。
-- [x] 永久不保存、傳輸、匯出或在 log 中輸出 JPEG。
+- [x] telemetry SQLite、export、log、fixture 與 Git 不保存 JPEG；M5F 僅允許 Center 的獨立 bounded snapshot store 保存每 site/channel 最後成功 JPEG，無 history。
 - [x] Dashboard renderer 依 site mapping 產生可貼入 HA UI 的 YAML，分為 NVR/recording、Ping/network、diagnostics。
 - [ ] 承德原型使用 `site_id: chengde`、顯示名稱「承德」；Tailscale 內網運作，M5 不新增 per-site token。
+- [x] M5F：Center scheduler、last-good snapshot store、UI、stale-checked consumer API 與統計已合併；Center prototype 已運作。
+- [ ] M5E v0.3.5：部署後完成至少一小時 final observation（目前尚未部署）。
+
+### M5F：Center Web UI 與最新 snapshot（已完成）
+
+- Center 提供簡易 HTML/CSS/JavaScript UI；每站一個分頁，顯示 telemetry、容量、queue/drop、snapshot 狀態與統計，使用相對 URL，為未來 HA add-on Ingress WebUI 預留基礎。
+- Center scheduler 依每站手動 channel list 輪詢 add-on snapshot API；例如 13 channels、batch concurrency 4 時依序 `4/4/4/1`，完成一輪後依 refresh interval 再開始。不得假設 channel count 或命名。
+- 每張 UI 卡片總顯示最後成功圖片：最近 attempt 成功為綠框，失敗為紅框並顯示圖片 age；從未成功顯示 placeholder。
+- Center 新 API 給同事指定 site/camera 取得最新可接受圖片；預設最多 stale 120 秒。具體 contract 見 `API.md`，不修改 local legacy endpoint。
+- 統計 snapshot 每 camera／site 的 rolling 1h、24h、7d 成功率與 latency mean/population stddev；只用 attempt metadata，不保存 JPEG history。
 
 ## 最小測試
 
@@ -223,12 +233,12 @@ M2B 已隨後在 monorepo add-on 完成實機驗證；8122 獨立舊正式 insta
 - Integration 不保存 NVR credentials。
 - 舊 snapshot API 不變。
 - Integration 能透過 local API 顯示既有核心狀態，但不建立 Snapshot camera entities。
-- M5 Center 僅處理 telemetry；任何未來統一取圖須另案設計與批准。
+- M5 telemetry 與 M5F snapshot store 分離；Center 僅可保留每 site/channel 最後成功 JPEG，任何 history、JPEG telemetry/export/log/fixture/Git 均禁止。
 - Ping 使用 Home Assistant 現成 integration。
 - 單一站點可由 AI agent 依文件手動部署；M5 一般 patch 不強制 rollback。
 - Center telemetry push 與 legacy local API 的邊界已被保留。
 
-不要求多站點自動部署或正式 release pipeline。M5 的 Center 是診斷資料服務，不處理影像。
+不要求多站點自動部署或正式 release pipeline。M5F Center 是診斷資料服務，另有嚴格受限的最後成功 snapshot store。
 
 ### M5D dashboard mapping
 
