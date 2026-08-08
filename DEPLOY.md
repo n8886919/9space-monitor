@@ -2,7 +2,7 @@
 
 ## 目的
 
-本文件定義單一站點的手動 SSH 部署，是 canonical deployment reference。部署任務已授權其中 bounded、可回復的 preflight、backup、upload、restart 與 smoke verification，不需在每個步驟重複請示。
+本文件定義單一站點的手動 SSH 部署，是 canonical deployment reference。部署任務已授權其中 bounded、可回復的 preflight、upload、restart 與 smoke verification，不需在每個步驟重複請示。
 
 本文件是部署說明，不是自動化腳本。
 
@@ -20,10 +20,12 @@
 - 不得對 `8122` 執行 test、restart、rebuild、reload、modify，亦不得把 `8122` 當成 integration URL。
 - 本 repository 的 monorepo add-on 版本為 `0.3.5`，host port 是 `8222`，container port 是 `8000`。
 - Supervisor add-on identifier／slug 與 internal hostname 不可混用。
-- 快速路徑只適用於遠端 source 與已安裝 add-on 都已是 `0.3.5`；不得因舊版 endpoint 可用就跳過 add-on 部署。
+- 唯讀 version gate 只有在遠端 source 與已安裝 add-on 都是 `0.3.5` 時才通過；不得因舊版 endpoint 可用就跳過必要的 add-on deployment。
 - 若任務已要求部署，add-on／integration 的 scoped upload、rebuild、restart 與 verify 可依本文件連續完成；操作 `8122`、`.storage`、destructive rollback、schema／auth 或 public exposure 仍須另行明確確認。
 - 不得直接編輯 `/config/.storage/core.config_entries` 或其他 `.storage` 檔案。
 - 不得自動建立或接受帶有 `_2` 後綴的 replacement entities。
+- 唯讀操作不備份。只有真正要修改的 component 才在 mutation 前建立 scoped rollback。
+- `.storage`／config-entry backup 只在確定要變更 config entry 前建立；普通 source deployment 不建立 full backup。
 
 ## 變數
 
@@ -90,47 +92,15 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 
 若輸出與預期不同，先停止並回報實際結果，再更新本次操作使用的 `ADDON_SLUG`。不要自行猜測。
 
-## 共用備份（所有路徑都必須先執行）
+## 路徑選擇
 
-無論是快速路徑、Generic Add-on Deployment、或後續 integration 部署，皆必須先完成備份並記錄 backup path。
+- 唯讀 preflight、smoke 與 observation 不建立備份，也不建立 rollback artifact。
+- Add-on source deployment 只保留一份 rolling `.old` source；不另外複製 integration 或 `.storage`。
+- Integration source deployment 使用同 filesystem transaction 的 `integration_replaced` 作 rollback；完成驗證後清除 transaction。
+- 只有實際要執行 UI Reconfigure 時，才備份一次 `core.config_entries`。
+- `.storage` migration、destructive cleanup、schema／auth 變更不屬 routine deployment；另做精確 plan 與 task-specific backup。
 
-若 config-entry backup 任一步驟失敗，deployment gate 立即關閉，禁止進入 smoke test、integration upload、或任何 add-on operation。
-
-```bash
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-
-ssh -p "$HA_SSH_PORT" "$REMOTE" "
-  set -eu
-  test -d /config/9space_backups
-  BACKUP=\$(mktemp -d "/config/9space_backups/$STAMP.XXXXXX")
-  ARTIFACT_DIR=\"\$BACKUP/deployment_artifacts\"
-  mkdir \"\$ARTIFACT_DIR\"
-
-  if [ -d '$INTEGRATION_REMOTE_DIR' ]; then
-    command -v jq >/dev/null
-    jq -e '.domain == "nvr_monitor" and (.version | type == "string")' '$INTEGRATION_REMOTE_DIR/manifest.json' >/dev/null
-    test ! -e \"\$ARTIFACT_DIR/integration_predeploy\"
-    cp -a '$INTEGRATION_REMOTE_DIR' \"\$ARTIFACT_DIR/integration_predeploy\"
-    test -f \"\$ARTIFACT_DIR/integration_predeploy/manifest.json\"
-  fi
-
-  if [ -d '$ADDON_REMOTE_DIR' ]; then
-    cp -a '$ADDON_REMOTE_DIR' \"\$BACKUP/addon\"
-  fi
-
-  test -f /config/.storage/core.config_entries
-  cp -a /config/.storage/core.config_entries \
-    \"\$BACKUP/core.config_entries\"
-  test -s \"\$BACKUP/core.config_entries\"
-
-  echo \"BACKUP=\$BACKUP\"
-  echo \"ARTIFACT_DIR=\$ARTIFACT_DIR\"
-"
-```
-
-記下輸出的 `BACKUP` 與 `ARTIFACT_DIR`；後續 integration 指令以 `BACKUP_PATH` 表示這次輸出的 `BACKUP`。`/config/.storage/core.config_entries` 只允許複製作備份，不得編輯、不得直接覆寫。
-
-## 快速路徑（預設）
+## 唯讀 preflight／smoke／observation（預設）
 
 Snapshot API smoke test 是 add-on API 與未來 Center/server 的 contract 驗證；integration 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
 
@@ -152,7 +122,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 "
 ```
 
-任一版本檢查或 smoke test 失敗時，快速路徑立即關閉。部署任務可在備份 gate 通過後直接走下方 Generic Add-on Deployment；不得以 `8122` 作替代驗證。若失敗顯示目標、slug 或 topology 不明，則停止並回報，不可猜測。
+任一版本檢查或 smoke test 失敗時，不得以 `8122` 作替代驗證。若任務只要求驗證／observation，回報實際結果後停止；若任務已要求部署且目標、slug、topology 均已確認，才進入下方 Add-on source deployment。
 
 host-side smoke test 範例：
 
@@ -228,19 +198,19 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 1. 不上傳 add-on source。
 2. 不執行 `ha apps rebuild`。
 3. 不執行 `ha apps restart`。
-4. 確認已完成「共用備份」且已有 backup path 紀錄。
-5. 直接進行 integration 部署。
+4. 若任務只要求 smoke／observation，到此停止，不建立任何備份。
+5. 只有任務明確包含 integration source deployment 時，才進入 Integration 部署。
 
 若任一項失敗：
 
 1. 保留並回報實際錯誤。
-2. 已要求部署時，確認備份 gate 後走下方 `Generic Add-on Deployment`；目標或 topology 不明時停止。
+2. 已要求部署且目標明確時走下方 Add-on source deployment；目標或 topology 不明時停止。
 
-## Generic Add-on Deployment
+## Add-on source deployment
 
-快速路徑不成立而任務已要求部署時使用以下步驟。
+遠端 add-on source／installed version 不符，而任務已要求部署時使用以下步驟。
 
-執行前先確認已完成「共用備份」且已有 backup path 紀錄。
+本路徑不建立 timestamped full backup。`$ADDON_REMOTE_DIR.old` 是唯一 rolling rollback source；每次 mutation 前以目前 canonical source 更新它，因此最多保留一份。
 
 ### 1. 上傳 add-on source
 
@@ -288,7 +258,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 ### 3. Add-on smoke test
 
-Generic add-on deployment 完成後，只驗證 monorepo add-on host port，不得碰 `8122`：
+Add-on source deployment 完成後，只驗證 monorepo add-on host port，不得碰 `8122`：
 
 ```bash
 test "$ADDON_HOST_PORT" = "8222"
@@ -326,7 +296,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 只在 add-on 新 API 與 integration client 都已在本機測試後執行。
 
-執行前先確認已完成「共用備份」且已有 backup path 紀錄。
+本路徑不複製 add-on 或 integration source，也不碰 `.storage`。換入前才在 `/config/9space_deploy` 建立同 filesystem transaction；`integration_replaced` 就是本次唯一 source rollback。
 
 ### Integration layout 不變量（fail-closed）
 
@@ -336,7 +306,7 @@ Home Assistant 會檢查 `/config/custom_components` 的第一層目錄。該層
 /config/custom_components/nvr_monitor/manifest.json
 ```
 
-因此 `/config/custom_components` 下禁止建立任何 integration 暫存、predeploy、failed、rollback 或 old source，特別是 `.nvr_monitor*`、`nvr_monitor.old*`、`nvr_monitor.bak*`。所有這些 artifacts 只能在 `/tmp` 或這次備份的 `/config/9space_backups/<timestamp>/deployment_artifacts`。
+因此 `/config/custom_components` 下禁止建立任何 integration 暫存、predeploy、failed、rollback 或 old source，特別是 `.nvr_monitor*`、`nvr_monitor.old*`、`nvr_monitor.bak*`。本次 transaction artifact 只能放在 `/config/9space_deploy/nvr-monitor.*`，完成驗證後清除；失敗時保留至 rollback 完成。
 
 以下 gate 必須在換入前、以及每次 `ha core check`／`ha core restart` 前執行；任何不符都立刻停止，不能以臨時刪除或移動其他目錄繞過。清理不明 legacy sibling 是獨立且可能具破壞性的操作，須確認精確目標後再做。
 
@@ -408,20 +378,27 @@ scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh \
 
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
-BACKUP_PATH="<recorded-backup-path>"; EXPECTED_VERSION="0.2.3"
+EXPECTED_VERSION="0.2.3"
 CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
-ARTIFACT_DIR="$BACKUP_PATH/deployment_artifacts"; REPLACED="$ARTIFACT_DIR/integration_replaced"
-test -d "$ARTIFACT_DIR"
+mkdir -p /config/9space_deploy
+ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nvr-monitor.XXXXXX)
 # The operator has saved the single helper block verbatim as this local remote file.
 source /tmp/nvr_monitor_layout_helper.sh
+PREVIOUS_VERSION=$(jq -r '.version' "$CANONICAL/manifest.json")
 begin_transaction
 cleanup() { rm -f /tmp/nvr_monitor.tgz /tmp/nvr_monitor_layout_helper.sh; }; trap cleanup EXIT
 tar -xzf /tmp/nvr_monitor.tgz --strip-components=1 -C "$STAGE"
 swap_verified_stage
+ROLLBACK_SOURCE="$REPLACED"
+echo "DEPLOY_ARTIFACT_DIR=$ARTIFACT_DIR"
+echo "ROLLBACK_SOURCE=$ROLLBACK_SOURCE"
+echo "PREVIOUS_VERSION=$PREVIOUS_VERSION"
 RESTART_MARKER=$(date '+%Y-%m-%d %H:%M:%S'); echo "nvr_monitor restart marker: $RESTART_MARKER"
 verify_nvr_monitor_layout; ha core restart || { echo 'restart failed; run the new-transaction rollback below once' >&2; exit 1; }
 REMOTE_SCRIPT
 ```
+
+記下 `DEPLOY_ARTIFACT_DIR`、`ROLLBACK_SOURCE`、`PREVIOUS_VERSION` 與 restart marker。它們只屬於這次 integration mutation，不是長期 backup。
 
 ### 2. 等待 Home Assistant
 
@@ -444,6 +421,21 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" '
 
 本階段不寫 config-entry migration。優先對既有 `nvr_monitor` entry 使用 Reconfigure，以保留仍由 integration 提供的 `entry_id`、`subentry_id`、entity identity 與 Dashboard 對應；刻意退役的 `camera.*_snapshot` 不在此保留範圍。
 
+`core.config_entries` 只在確定要執行 UI Reconfigure 前建立一次；如果既有 config entry 不需變更，跳過本段備份與 UI 步驟。此檔只供緊急比對，不得編輯、不得直接覆寫回 `.storage`。
+
+```bash
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+ssh -p "$HA_SSH_PORT" "$REMOTE" "
+  set -eu
+  test -d /config/9space_backups
+  test -f /config/.storage/core.config_entries
+  CONFIG_ENTRY_BACKUP=\$(mktemp '/config/9space_backups/core.config_entries.$STAMP.XXXXXX')
+  cp -a /config/.storage/core.config_entries \"\$CONFIG_ENTRY_BACKUP\"
+  test -s \"\$CONFIG_ENTRY_BACKUP\"
+  echo \"CONFIG_ENTRY_BACKUP=\$CONFIG_ENTRY_BACKUP\"
+"
+```
+
 在 Home Assistant UI：
 
 1. 找到既有 `nvr_monitor` config entry。
@@ -460,7 +452,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" '
 刪除／重建或停用後重建不是預設路徑，但也不禁止。若使用者明確選擇這條路，文件必須先要求記錄：
 
 1. 現有 config entry。
-2. 14 個 channel 與 subentry 對應。
+2. 目前 site mapping 定義的 channel 與 subentry 對應。
 3. 現有 entity IDs。
 4. Dashboard 使用情況。
 
@@ -532,9 +524,28 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
   "ha apps logs '$ADDON_SLUG' | tail -n 100"
 ```
 
+### 完成 integration transaction
+
+只有 integration source、Core recovery、restart 後 log 與必要 UI 驗證全部通過，而且確定不需 rollback 後，才清除本次 transaction。Add-on 的 `$ADDON_REMOTE_DIR.old` 保留為唯一 rolling rollback，不另累積 timestamped copy。
+
+```bash
+DEPLOY_ARTIFACT_DIR="<recorded-deploy-artifact-dir>"
+ssh -p "$HA_SSH_PORT" "$REMOTE" "
+  set -eu
+  case '$DEPLOY_ARTIFACT_DIR' in
+    /config/9space_deploy/nvr-monitor.*) ;;
+    *) echo 'invalid deploy artifact path' >&2; exit 1 ;;
+  esac
+  test -d '$DEPLOY_ARTIFACT_DIR'
+  rm -rf -- '$DEPLOY_ARTIFACT_DIR'
+"
+```
+
 ## Rollback
 
 ### Integration rollback
+
+`swap_verified_stage` 或 `ha core check` 失敗時會在同一 transaction 自動恢復。只有換入成功後才發現問題時，才使用先前記錄的 `ROLLBACK_SOURCE` 與 `PREVIOUS_VERSION`：
 
 ```bash
 awk '/DEPLOY_LAYOUT_HELPER_BEGIN/{keep=1} keep{print} /DEPLOY_LAYOUT_HELPER_END/{exit}' DEPLOY.md > /tmp/nvr_monitor_layout_helper.sh
@@ -542,19 +553,26 @@ bash -n /tmp/nvr_monitor_layout_helper.sh
 scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh "$REMOTE:/tmp/nvr_monitor_layout_helper.sh"
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
-BACKUP_PATH="<recorded-backup-path>"; EXPECTED_VERSION="0.2.2"
+ROLLBACK_SOURCE="<recorded-rollback-source>"
+EXPECTED_VERSION="<recorded-previous-version>"
 CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
-ARTIFACT_DIR="$BACKUP_PATH/deployment_artifacts"
-rollback_source="$ARTIFACT_DIR/integration_predeploy"; test -d "$rollback_source"
+case "$ROLLBACK_SOURCE" in
+  /config/9space_deploy/nvr-monitor.*/transaction.*/integration_replaced) ;;
+  *) echo 'invalid rollback source' >&2; exit 1 ;;
+esac
+test -d "$ROLLBACK_SOURCE"
+mkdir -p /config/9space_deploy
+ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nvr-monitor.XXXXXX)
 source /tmp/nvr_monitor_layout_helper.sh
 begin_transaction
 cleanup() { rm -f /tmp/nvr_monitor_layout_helper.sh; }; trap cleanup EXIT
-cp -a "$rollback_source/." "$STAGE"; swap_verified_stage
+cp -a "$ROLLBACK_SOURCE/." "$STAGE"; swap_verified_stage
 verify_nvr_monitor_layout; ha core restart
+echo "ROLLBACK_ARTIFACT_DIR=$ARTIFACT_DIR"
 REMOTE_SCRIPT
 ```
 
-Rollback 使用相同的唯一 helper；還原 integration source 後，必須先通過 `ha core check` 才能重新啟動 Core，且 failed source 與 rollback source 都保留在 `deployment_artifacts`，不留在 `custom_components`。
+Rollback 使用相同 helper；還原 integration source 後必須先通過 `ha core check` 才能重新啟動 Core。驗證完成後，以前述相同 path gate 清除原 deployment 與 rollback transaction，不在 `custom_components` 留 artifact。
 
 若 entry data 已改成 `addon_base_url`：
 
@@ -589,7 +607,9 @@ git commit:
 site alias:
 add-on version:
 integration version:
-backup path:
+add-on rollback source: .old / none
+integration transaction: removed / retained for rollback / none
+config-entry backup: path / not created
 smoke test:
 rollback needed:
 notes:

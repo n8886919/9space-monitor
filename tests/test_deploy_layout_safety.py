@@ -68,7 +68,7 @@ class DeployLayoutSafetyTests(unittest.TestCase):
         write_manifest(self.components / DOMAIN)
         artifact = (
             self.config
-            / "9space_backups/20260803T000000Z/deployment_artifacts/integration_predeploy"
+            / "9space_deploy/nvr-monitor.ABC123/transaction.DEF456/integration_replaced"
         )
         write_manifest(artifact)
         self.assertTrue(canonical_layout_is_safe(self.components))
@@ -76,18 +76,24 @@ class DeployLayoutSafetyTests(unittest.TestCase):
     def test_document_has_fail_closed_external_artifacts_only(self) -> None:
         self.assertIn("verify_nvr_monitor_layout", DEPLOY)
         self.assertIn("test \"$count\" -eq 1", DEPLOY)
-        self.assertIn("deployment_artifacts", DEPLOY)
+        self.assertIn("/config/9space_deploy/nvr-monitor.", DEPLOY)
         for forbidden in (".nvr_monitor*", "nvr_monitor.old*", "nvr_monitor.bak*"):
             with self.subTest(forbidden=forbidden):
                 self.assertIn(forbidden, DEPLOY)
         self.assertNotIn("$INTEGRATION_REMOTE_DIR.new", DEPLOY)
         self.assertNotIn("$INTEGRATION_REMOTE_DIR.old", DEPLOY)
+        self.assertNotIn("integration_predeploy", DEPLOY)
         self.assertGreaterEqual(DEPLOY.count("DEPLOY_LAYOUT_HELPER_BEGIN"), 4)
         self.assertIn("cleanup() { rm -f", DEPLOY)
         self.assertNotIn('rm -rf "$TXN_DIR"', DEPLOY)
 
     def test_document_keeps_storage_read_only(self) -> None:
-        self.assertIn("只允許複製作備份，不得編輯", DEPLOY)
+        self.assertIn("只在確定要執行 UI Reconfigure 前建立一次", DEPLOY)
+        self.assertEqual(
+            1,
+            DEPLOY.count("cp -a /config/.storage/core.config_entries"),
+        )
+        self.assertIn("不得編輯、不得直接覆寫", DEPLOY)
         self.assertNotIn("core.config_entries\n  mv", DEPLOY)
 
     def test_layout_deployment_shell_blocks_parse_in_bash(self) -> None:
@@ -151,15 +157,15 @@ class DeployLayoutSafetyTests(unittest.TestCase):
             cc=root/"cc"; art=root/"art"; art.mkdir(); canonical=cc/DOMAIN
             def component(path, version="0.2.2"):
                 write_manifest(path); (path/"manifest.json").write_text(json.dumps({"domain":DOMAIN,"version":version})); (path/"__init__.py").touch()
-            component(canonical); component(art/"integration_predeploy", "0.2.1"); component(root/"candidate", "0.2.2")
+            component(canonical, "0.2.1"); component(root/"rollback_source", "0.2.1"); component(root/"candidate", "0.2.2")
             checks=root/"checks"; env={**__import__('os').environ,"PATH":f"{fake}:{__import__('os').environ['PATH']}","HA_CHECKS":str(checks)}
             base=f"source {helper_path}; CUSTOM_COMPONENTS={cc}; CANONICAL={canonical}; ARTIFACT_DIR={art}; EXPECTED_VERSION=0.2.2; "
             # Success then a separate rollback transaction: no collision/nesting.
-            command=base+"begin_transaction; cp -a $CANONICAL/. $STAGE; swap_verified_stage; begin_transaction; EXPECTED_VERSION=0.2.1; cp -a $ARTIFACT_DIR/integration_predeploy/. $STAGE; swap_verified_stage"
+            command=base+f"begin_transaction; cp -a {root}/candidate/. $STAGE; swap_verified_stage; ROLLBACK_SOURCE=$REPLACED; begin_transaction; EXPECTED_VERSION=0.2.1; cp -a $ROLLBACK_SOURCE/. $STAGE; swap_verified_stage"
             self.assertEqual(0, subprocess.run(["bash","-c",command],env=env).returncode)
             self.assertGreaterEqual(len(list(art.glob("transaction.*"))),2)
             # Invalid rollback version fails before canonical is moved.
-            bad=base+"begin_transaction; cp -a $ARTIFACT_DIR/integration_predeploy/. $STAGE; EXPECTED_VERSION=9; ! swap_verified_stage; test -d $CANONICAL"
+            bad=base+f"begin_transaction; cp -a {root}/rollback_source/. $STAGE; EXPECTED_VERSION=9; ! swap_verified_stage; test -d $CANONICAL"
             self.assertEqual(0, subprocess.run(["bash","-c",bad],env=env).returncode)
             # core-check failure restores the original canonical.
             fail_once=root/"fail_once"; fail=base+f"begin_transaction; cp -a {root}/candidate/. $STAGE; export HA_FAIL_ONCE={fail_once}; ! swap_verified_stage; grep -F '\"version\": \"0.2.1\"' $CANONICAL/manifest.json; grep -F '\"version\": \"0.2.2\"' $FAILED/manifest.json; test $(wc -l < $HA_CHECKS) -ge 2"
@@ -240,23 +246,19 @@ class DeployLayoutSafetyTests(unittest.TestCase):
                     if case["expect_traceback"]:
                         self.assertIn("Traceback", output.read_text())
 
-    def test_backup_mktemp_same_stamp_never_reuses_directory(self) -> None:
-        match = re.search(
-            r'BACKUP=\\?\$\(mktemp -d "(/config/9space_backups/\$STAMP\.XXXXXX)"\)',
+    def test_read_only_paths_do_not_require_backups(self) -> None:
+        self.assertIn(
+            "唯讀 preflight、smoke 與 observation 不建立備份",
             DEPLOY,
         )
-        self.assertIsNotNone(match, "DEPLOY must use a unique mktemp backup template")
-        deploy_template = match.group(1)
-        self.assertTrue(deploy_template.endswith("$STAMP.XXXXXX"))
-        with tempfile.TemporaryDirectory() as tempdir:
-            backups = Path(tempdir) / "backups"; backups.mkdir()
-            stamp = "20260803T000000Z"
-            template = str(backups / deploy_template.rsplit("/", 1)[1].replace("$STAMP", stamp))
-            first = Path(subprocess.check_output(["mktemp", "-d", template], text=True).strip())
-            (first / "sentinel").write_text("keep")
-            second = Path(subprocess.check_output(["mktemp", "-d", template], text=True).strip())
-            self.assertNotEqual(first, second)
-            self.assertEqual("keep", (first / "sentinel").read_text())
+        self.assertNotIn("共用備份（所有路徑都必須先執行）", DEPLOY)
+        self.assertNotIn("若 config-entry backup 任一步驟失敗", DEPLOY)
+
+    def test_rollbacks_are_scoped_to_the_mutated_component(self) -> None:
+        self.assertIn("ADDON_REMOTE_DIR.old", DEPLOY)
+        self.assertIn('ROLLBACK_SOURCE="$REPLACED"', DEPLOY)
+        self.assertNotIn("integration_predeploy", DEPLOY)
+        self.assertNotIn('"$BACKUP/addon"', DEPLOY)
 
 
 if __name__ == "__main__":
