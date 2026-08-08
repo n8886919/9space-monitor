@@ -2,28 +2,26 @@
 
 ## 目的
 
-現階段只部署一個站點，由使用者與 AI agent 透過 SSH 手動執行。
+本文件定義單一站點的手動 SSH 部署，是 canonical deployment reference。部署任務已授權其中 bounded、可回復的 preflight、backup、upload、restart 與 smoke verification，不需在每個步驟重複請示。
 
 本文件是部署說明，不是自動化腳本。
 
 不使用：
 
-- `9space-ha-ops` GitHub Actions
+- GitHub Actions deployment
 - self-hosted runner
 - 多站點 rollout
 - 自動修改 Home Assistant `.storage`
 - 自動 config-entry migration
 
-`9space-ha-ops` 暫時保留作為歷史參考；新流程成功使用兩次後可 archive。
-
-## M4 安全邊界
+## 安全邊界
 
 - `8122` 是獨立舊正式服務，永久禁止操作。
 - 不得對 `8122` 執行 test、restart、rebuild、reload、modify，亦不得把 `8122` 當成 integration URL。
-- 本 repository 的 monorepo add-on 版本為 `0.3.3`，host port 是 `8222`，container port 是 `8000`。
+- 本 repository 的 monorepo add-on 版本為 `0.3.5`，host port 是 `8222`，container port 是 `8000`。
 - Supervisor add-on identifier／slug 與 internal hostname 不可混用。
-- 快速路徑只適用於遠端 source 與已安裝 add-on 都已是 `0.3.3`；不得因舊 `0.3.2` endpoint 可用就跳過 add-on 部署。
-- 任何 add-on 上傳、rebuild、restart、rollback 操作都必須再次取得使用者明確授權後才可執行。
+- 快速路徑只適用於遠端 source 與已安裝 add-on 都已是 `0.3.5`；不得因舊版 endpoint 可用就跳過 add-on 部署。
+- 若任務已要求部署，add-on／integration 的 scoped upload、rebuild、restart 與 verify 可依本文件連續完成；操作 `8122`、`.storage`、destructive rollback、schema／auth 或 public exposure 仍須另行明確確認。
 - 不得直接編輯 `/config/.storage/core.config_entries` 或其他 `.storage` 檔案。
 - 不得自動建立或接受帶有 `_2` 後綴的 replacement entities。
 
@@ -92,7 +90,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 
 若輸出與預期不同，先停止並回報實際結果，再更新本次操作使用的 `ADDON_SLUG`。不要自行猜測。
 
-## M4 共用備份（所有路徑都必須先執行）
+## 共用備份（所有路徑都必須先執行）
 
 無論是快速路徑、Generic Add-on Deployment、或後續 integration 部署，皆必須先完成備份並記錄 backup path。
 
@@ -130,16 +128,16 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 "
 ```
 
-記下輸出的 `BACKUP` 與 `ARTIFACT_DIR`；後續 integration 指令以 `BACKUP_PATH` 表示這次輸出的 `BACKUP`。`/config/.storage/core.config_entries` 在 M4 只允許複製作備份，不得編輯、不得直接覆寫。
+記下輸出的 `BACKUP` 與 `ARTIFACT_DIR`；後續 integration 指令以 `BACKUP_PATH` 表示這次輸出的 `BACKUP`。`/config/.storage/core.config_entries` 只允許複製作備份，不得編輯、不得直接覆寫。
 
-## M4 快速路徑（預設）
+## 快速路徑（預設）
 
 Snapshot API smoke test 是 add-on API 與未來 Center/server 的 contract 驗證；integration 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
 
-只有遠端 source 和 Supervisor 已安裝版本都明確為 `0.3.3`，且以下唯讀檢查都正常時，才可跳過 add-on 上傳、rebuild 與 restart：
+只有遠端 source 和 Supervisor 已安裝版本都明確為 `0.3.5`，且以下唯讀檢查都正常時，才可跳過 add-on 上傳、rebuild 與 restart：
 
-- `${ADDON_REMOTE_DIR}/config.yaml` 的 `version: "0.3.3"`
-- `ha apps info "$ADDON_SLUG"` 顯示 version `0.3.3`
+- `${ADDON_REMOTE_DIR}/config.yaml` 的 `version: "0.3.5"`
+- `ha apps info "$ADDON_SLUG"` 顯示 version `0.3.5`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/healthz`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/camera/1`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/v1/channels`
@@ -149,12 +147,12 @@ Snapshot API smoke test 是 add-on API 與未來 Center/server 的 contract 驗�
 ```bash
 ssh -p "$HA_SSH_PORT" "$REMOTE" "
   set -eu
-  grep -Fx 'version: \"0.3.3\"' '$ADDON_REMOTE_DIR/config.yaml'
-  ha apps info '$ADDON_SLUG' | grep -Eq 'version:[[:space:]]*0\\.3\\.3([[:space:]]|\$)'
+  grep -Fx 'version: \"0.3.5\"' '$ADDON_REMOTE_DIR/config.yaml'
+  ha apps info '$ADDON_SLUG' | grep -Eq 'version:[[:space:]]*0\\.3\\.5([[:space:]]|\$)'
 "
 ```
 
-任一版本檢查或 smoke test 失敗時，快速路徑立即關閉；停止並要求使用者另行授權 add-on 上傳、rebuild 與 restart。不得以 `8122` 作替代驗證。
+任一版本檢查或 smoke test 失敗時，快速路徑立即關閉。部署任務可在備份 gate 通過後直接走下方 Generic Add-on Deployment；不得以 `8122` 作替代驗證。若失敗顯示目標、slug 或 topology 不明，則停止並回報，不可猜測。
 
 host-side smoke test 範例：
 
@@ -230,19 +228,19 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 1. 不上傳 add-on source。
 2. 不執行 `ha apps rebuild`。
 3. 不執行 `ha apps restart`。
-4. 確認已完成「M4 共用備份」且已有 backup path 紀錄。
+4. 確認已完成「共用備份」且已有 backup path 紀錄。
 5. 直接進行 integration 部署。
 
 若任一項失敗：
 
-1. 停止自動操作並回報實際錯誤。
-2. 由使用者決定是否授權走下方 `Generic Add-on Deployment`。
+1. 保留並回報實際錯誤。
+2. 已要求部署時，確認備份 gate 後走下方 `Generic Add-on Deployment`；目標或 topology 不明時停止。
 
-## Generic Add-on Deployment（目前預設跳過）
+## Generic Add-on Deployment
 
-以下步驟只在使用者明確授權 add-on 操作時使用。
+快速路徑不成立而任務已要求部署時使用以下步驟。
 
-執行前先確認已完成「M4 共用備份」且已有 backup path 紀錄。
+執行前先確認已完成「共用備份」且已有 backup path 紀錄。
 
 ### 1. 上傳 add-on source
 
@@ -286,7 +284,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 "
 ```
 
-若目前 HA CLI 不支援 `rebuild`，不要猜替代命令；回報實際 `ha apps --help` 輸出，再決定。
+若目前 HA CLI 不支援 `rebuild`，不要猜替代命令；回報實際 `ha apps --help` 輸出並停止這條路徑。
 
 ### 3. Add-on smoke test
 
@@ -328,7 +326,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 只在 add-on 新 API 與 integration client 都已在本機測試後執行。
 
-執行前先確認已完成「M4 共用備份」且已有 backup path 紀錄。
+執行前先確認已完成「共用備份」且已有 backup path 紀錄。
 
 ### Integration layout 不變量（fail-closed）
 
@@ -340,7 +338,7 @@ Home Assistant 會檢查 `/config/custom_components` 的第一層目錄。該層
 
 因此 `/config/custom_components` 下禁止建立任何 integration 暫存、predeploy、failed、rollback 或 old source，特別是 `.nvr_monitor*`、`nvr_monitor.old*`、`nvr_monitor.bak*`。所有這些 artifacts 只能在 `/tmp` 或這次備份的 `/config/9space_backups/<timestamp>/deployment_artifacts`。
 
-以下 gate 必須在換入前、以及每次 `ha core check`／`ha core restart` 前執行；任何不符都立刻停止，不能以刪除或移動未預先核准的目錄繞過。
+以下 gate 必須在換入前、以及每次 `ha core check`／`ha core restart` 前執行；任何不符都立刻停止，不能以臨時刪除或移動其他目錄繞過。清理不明 legacy sibling 是獨立且可能具破壞性的操作，須確認精確目標後再做。
 
 下列是唯一的 production helper 定義。每次 remote integration 操作都要將它完整傳入同一個 `bash -s` session；不可複製出不同版本。它以 `jq` 驗證 JSON，缺少 `jq`、manifest 壞掉、version 不符、或 device 不同都會 fail-closed。
 
@@ -392,14 +390,7 @@ filter_logs_after_marker() {
 # DEPLOY_LAYOUT_HELPER_END
 ```
 
-本次現場曾觀察到下列 legacy sibling backup；它們不可在這一輪移動或刪除，但 gate 會因其 manifest 而 fail-closed，須先由使用者另行授權處理：
-
-```text
-nvr_monitor.bak_20260731_230508
-nvr_monitor.bak_20260801_150229
-nvr_monitor.old
-nvr_monitor.old.20260802T154701Z
-```
+若 gate 偵測到 `.nvr_monitor*`、`nvr_monitor.old*` 或 `nvr_monitor.bak*` 等同 domain sibling，routine deployment 必須 fail-closed，不得在部署途中移動或刪除。精確清理這類 artifact 是獨立的 destructive task，須先確認現況與目標。
 
 ### 1. 上傳 integration
 
@@ -487,12 +478,12 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" '
 
 1. 停止自動操作。
 2. 回報實際錯誤。
-3. 由使用者決定下一步：
+3. 請使用者決定涉及 config-entry identity 的下一步：
    A. 修正 internal add-on URL 後重試 Reconfigure。
    B. 刪除並重新建立 config entry。
    C. Rollback integration。
 
-Engineer 不得自行替使用者選擇。
+Agent 不得自行替使用者選擇會改變 config-entry／entity identity 的方案。
 
 ## 實機驗證
 
@@ -573,7 +564,7 @@ Rollback 使用相同的唯一 helper；還原 integration source 後，必須�
 
 ### Add-on rollback
 
-Add-on rollback 不是 M4 預設路徑，只有在使用者明確授權時才執行：
+下列 add-on rollback 會刪除目前 source，屬 destructive rollback；只有在使用者明確確認精確目標後才執行：
 
 ```bash
 ssh -p "$HA_SSH_PORT" "$REMOTE" "
