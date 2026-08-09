@@ -6,7 +6,8 @@ Updated: 2026-08-09
 
 - Branch: `agent/m5e-center-observability`
 - Functional release commit: `b3d3741`.
-- Local/deployed versions: add-on `0.3.7`; integration `0.2.5`.
+- Local release candidate versions: add-on `0.3.8`; integration `0.2.6`. Deployed versions remain add-on `0.3.7` and integration `0.2.5`.
+- Local correction moves the 24-hour live ring from add-on to integration, removes live aggregates from Center telemetry, and discards old volatile history without migration; not yet published or deployed.
 - Recording/live aggregate correction 已發布並部署至承德：有效片段數、24 小時錄影覆蓋率、日在線率與在線轉非在線斷線次數均由 Snapshot add-on 提供，history 僅保留 bounded RAM，不送 Center。
 - M5E v0.3.5 已部署至承德並完成使用者接受的 35 分鐘 observation。
 - Ping (ICMP)／RTT／packet loss 保留在 Home Assistant：integration 不再送 `ha.ping`，Center 不再接受或顯示 Ping，dashboard renderer 產生 local current／rolling 1h／rolling 24h cards。
@@ -25,10 +26,10 @@ Updated: 2026-08-09
 
 ## Next
 
-1. 以 live entity registry 確認各 camera 的原生 Ping binary sensor、RTT average 與 packet-loss entity IDs；RTT／loss 預設停用時由使用者在 HA UI 啟用。
-2. 由使用者在指定 HA dashboard view 的 UI code editor 套用 renderer 產生的 NVR + local Ping cards；不得以 API 或直接編輯 `.storage` 代替。
-3. Recording/live aggregate correction 已完成 UI runtime 驗收，本次 integration transaction 已清除。Center 不需變更。
-4. 既有 Center `ha.ping` rows 可依七日 retention 自然淘汰；若要求立即刪除，需另做精確 destructive data approval。
+1. 若部署 live-history ownership correction，先部署 integration `0.2.6`，再由 Supervisor managed repository 更新 add-on `0.3.8`；舊 add-on RAM history 直接捨棄，Center 不需部署。
+2. 以 live entity registry 確認各 camera 的原生 Ping binary sensor、RTT average 與 packet-loss entity IDs；RTT／loss 預設停用時由使用者在 HA UI 啟用。
+3. 由使用者在指定 HA dashboard view 的 UI code editor 套用 renderer 產生的 NVR + local Ping cards；不得以 API 或直接編輯 `.storage` 代替。
+4. Recording/live aggregate correction `0.3.7`／`0.2.5` 已完成 UI runtime 驗收，本次 integration transaction 已清除。
 
 ## Blockers
 

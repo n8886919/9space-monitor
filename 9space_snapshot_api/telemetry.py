@@ -1,17 +1,14 @@
 """Memory-only, best-effort NVR telemetry delivery for M5B.
 
-The add-on never persists telemetry: recent observations live in a 24-hour
-deque and outbound batches live in a bounded asyncio queue.  A Center outage
-therefore only loses diagnostic metadata; it never delays NVR work or API
-shutdown.
+The add-on retains no telemetry history. Outbound batches only live in a
+bounded asyncio queue, so a Center outage loses diagnostic metadata without
+delaying NVR work or API shutdown.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict, deque
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import ipaddress
@@ -22,7 +19,6 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 
-RING_WINDOW_MS = 24 * 60 * 60 * 1000
 DEFAULT_QUEUE_MAX_BATCHES = 100
 MAX_QUEUE_MAX_BATCHES = 100
 DEFAULT_TIMEOUT_SECONDS = 2.0
@@ -87,12 +83,6 @@ class UrllibCenterClient:
                     raise OSError("center_rejected_batch")
 
         await asyncio.to_thread(_send)
-
-
-@dataclass(frozen=True, slots=True)
-class _LiveSample:
-    timestamp_ms: int
-    live_video: bool | None
 
 
 def _timestamp(ms: int) -> str:
@@ -215,46 +205,10 @@ def _safe_producer_health(value: object) -> dict[str, str | int | bool | None]:
 
 
 class NvrTelemetryModel:
-    """Create strictly allowlisted NVR events from in-memory channel state."""
+    """Create strictly allowlisted current-state NVR events."""
 
-    def __init__(self, sample_interval_seconds: int) -> None:
-        self._sample_interval_seconds = max(1, sample_interval_seconds)
-        sample_capacity = RING_WINDOW_MS // (self._sample_interval_seconds * 1000) + 1
-        self._live_samples: dict[int, deque[_LiveSample]] = defaultdict(
-            lambda: deque(maxlen=sample_capacity)
-        )
+    def __init__(self) -> None:
         self._sequence = 0
-
-    def observe(self, channel_states: Mapping[int, Mapping[str, Any]], *, now_ms: int) -> None:
-        cutoff = now_ms - RING_WINDOW_MS
-        for channel_id, state in channel_states.items():
-            samples = self._live_samples[channel_id]
-            while samples and samples[0].timestamp_ms < cutoff:
-                samples.popleft()
-            live_state = state.get("live", state)
-            raw_live = live_state.get("live_video")
-            live_video = raw_live if type(raw_live) is bool else None
-            samples.append(_LiveSample(now_ms, live_video))
-
-    def _live_aggregates(self, channel_id: int, now_ms: int) -> dict[str, int | float]:
-        samples = self._live_samples[channel_id]
-        cutoff = now_ms - RING_WINDOW_MS
-        while samples and samples[0].timestamp_ms < cutoff:
-            samples.popleft()
-        observed = [sample.live_video for sample in samples if sample.live_video is not None]
-        online = sum(value is True for value in observed)
-        disconnects = sum(
-            previous is True and current is False
-            for previous, current in zip(observed, observed[1:])
-        )
-        return {
-            "live_sample_count_24h": len(observed),
-            "live_online_rate_24h": (online * 100 / len(observed)) if observed else 0.0,
-            "live_observed_hours_24h": min(
-                24.0, len(observed) * self._sample_interval_seconds / 3600
-            ),
-            "disconnect_count_24h": disconnects,
-        }
 
     def _event(
         self, site_id: str, kind: str, channel_id: int | None, now_ms: int, metrics: dict[str, Any]
@@ -287,7 +241,6 @@ class NvrTelemetryModel:
             live_metrics: dict[str, Any] = {
                 "live_video": live_video if type(live_video) is bool else None,
                 "error_code": _safe_error(live_state.get("error_code")),
-                **self._live_aggregates(channel_id, now_ms),
             }
             events.append(self._event(site_id, "nvr.live", channel_id, now_ms, live_metrics))
             recent = recording_state.get("recording_recent")

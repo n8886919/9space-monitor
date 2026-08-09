@@ -31,6 +31,7 @@ class AddonChannel:
     recording_query_ok: bool
     recording_recent: bool | None
     last_recording: str | None
+    live_checked_at: str | None
     recording_files_24h: int | None
     recording_coverage_24h: float | None
     daily_online_rate: float | None
@@ -63,11 +64,13 @@ class AddonChannel:
             raise AddonInvalidResponse("invalid_channel_contract")
         if value["recording_recent"] is not None and type(value["recording_recent"]) is not bool:
             raise AddonInvalidResponse("invalid_channel_contract")
-        for key in ("last_recording", "checked_at", "error_code"):
+        for key in ("last_recording", "live_checked_at", "checked_at", "error_code"):
+            if key not in value:
+                continue
             if value[key] is not None and not isinstance(value[key], str):
                 raise AddonInvalidResponse("invalid_channel_contract")
-        for key in ("last_recording", "checked_at"):
-            if value[key] is not None:
+        for key in ("last_recording", "live_checked_at", "checked_at"):
+            if value.get(key) is not None:
                 try:
                     parsed = datetime.fromisoformat(value[key])
                 except ValueError:
@@ -96,6 +99,7 @@ class AddonChannel:
             recording_query_ok=value["recording_query_ok"],
             recording_recent=value["recording_recent"],
             last_recording=value["last_recording"],
+            live_checked_at=value.get("live_checked_at"),
             recording_files_24h=recording_files,
             recording_coverage_24h=float(coverage) if coverage is not None else None,
             daily_online_rate=float(online_rate) if online_rate is not None else None,
@@ -112,6 +116,7 @@ class AddonChannel:
             "recording_query_ok": self.recording_query_ok,
             "recording_recent": self.recording_recent,
             "last_recording": self.last_recording,
+            "live_checked_at": self.live_checked_at,
             "recording_files_24h": self.recording_files_24h,
             "recording_coverage_24h": self.recording_coverage_24h,
             "daily_online_rate": self.daily_online_rate,

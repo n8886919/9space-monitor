@@ -53,10 +53,9 @@ CHANNEL = {
     "recording_query_ok": True,
     "recording_recent": True,
     "last_recording": "2026-08-01T21:30:00+08:00",
+    "live_checked_at": "2026-08-01T21:31:00+08:00",
     "recording_files_24h": 42,
     "recording_coverage_24h": 97.5,
-    "daily_online_rate": 92.5,
-    "nvr_live_video_disconnect_count_24h": 3,
     "checked_at": "2026-08-01T21:31:00+08:00",
     "error_code": None,
 }
@@ -136,30 +135,30 @@ class AddonApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, channels[0].channel_id)
         self.assertEqual(42, channels[0].recording_files_24h)
         self.assertEqual(97.5, channels[0].recording_coverage_24h)
-        self.assertEqual(92.5, channels[0].daily_online_rate)
-        self.assertEqual(3, channels[0].nvr_live_video_disconnect_count_24h)
+        self.assertEqual("2026-08-01T21:31:00+08:00", channels[0].live_checked_at)
+        self.assertIsNone(channels[0].daily_online_rate)
+        self.assertIsNone(channels[0].nvr_live_video_disconnect_count_24h)
         self.assertEqual(42, channels[0].as_dict()["recording_files_24h"])
 
     async def test_optional_aggregate_fields_support_older_addon(self):
         older = {
             key: value
             for key, value in CHANNEL.items()
-            if key
-            not in {
-                "recording_files_24h",
-                "recording_coverage_24h",
-                "daily_online_rate",
-                "nvr_live_video_disconnect_count_24h",
-            }
+            if key != "live_checked_at"
         }
+        older.update(
+            {
+                "daily_online_rate": 92.5,
+                "nvr_live_video_disconnect_count_24h": 3,
+            }
+        )
         client = addon_api.AddonApiClient(
             "http://addon:8000", FakeSession([FakeResponse(payload=[older])])
         )
         channel = (await client.async_get_channels())[0]
-        self.assertIsNone(channel.recording_files_24h)
-        self.assertIsNone(channel.recording_coverage_24h)
-        self.assertIsNone(channel.daily_online_rate)
-        self.assertIsNone(channel.nvr_live_video_disconnect_count_24h)
+        self.assertIsNone(channel.live_checked_at)
+        self.assertEqual(92.5, channel.daily_online_rate)
+        self.assertEqual(3, channel.nvr_live_video_disconnect_count_24h)
 
     async def test_invalid_aggregate_fields_are_rejected(self):
         invalid_values = (
@@ -187,6 +186,14 @@ class AddonApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_naive_timestamp_is_invalid(self):
         invalid = {**CHANNEL, "checked_at": "2026-08-01T21:31:00"}
+        client = addon_api.AddonApiClient(
+            "http://addon:8000", FakeSession([FakeResponse(payload=[invalid])])
+        )
+        with self.assertRaises(addon_api.AddonInvalidResponse):
+            await client.async_get_channels()
+
+    async def test_naive_live_checked_at_is_invalid(self):
+        invalid = {**CHANNEL, "live_checked_at": "2026-08-01T21:31:00"}
         client = addon_api.AddonApiClient(
             "http://addon:8000", FakeSession([FakeResponse(payload=[invalid])])
         )

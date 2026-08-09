@@ -121,8 +121,9 @@ class AddonApiTests(unittest.TestCase):
             self.assertIsNone(channel["last_recording"])
             self.assertEqual(channel["recording_files_24h"], 42)
             self.assertEqual(channel["recording_coverage_24h"], 97.5)
-            self.assertEqual(channel["daily_online_rate"], 0.0)
-            self.assertEqual(channel["nvr_live_video_disconnect_count_24h"], 0)
+            self.assertIsNotNone(channel["live_checked_at"])
+            self.assertNotIn("daily_online_rate", channel)
+            self.assertNotIn("nvr_live_video_disconnect_count_24h", channel)
 
     def test_get_channel_not_found(self) -> None:
         resp = self.client.get("/api/v1/channels/99")

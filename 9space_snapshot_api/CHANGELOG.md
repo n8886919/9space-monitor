@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.8 - 2026-08-09
+
+- Removed all 24-hour live-video history from the add-on and Center telemetry.
+- Added `live_checked_at` so the Home Assistant integration can deduplicate
+  current probe results and own the rolling online/disconnect calculation.
+- Existing volatile add-on history is discarded without migration.
+
 ## 0.3.7 - 2026-08-09
 
 - Exposed valid recording segment count and recording coverage for the local

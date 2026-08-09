@@ -188,7 +188,7 @@ class NvrTelemetryModelTests(unittest.TestCase):
         self.assertEqual(metrics["gap_total_seconds_24h"], 86_400.0)
 
     def test_failed_recording_state_does_not_emit_old_success_aggregates(self) -> None:
-        model = NvrTelemetryModel(sample_interval_seconds=300)
+        model = NvrTelemetryModel()
         states = {1: {"recording": {
             "recording_query_ok": False,
             "recording_recent": None,
@@ -202,7 +202,7 @@ class NvrTelemetryModelTests(unittest.TestCase):
         self.assertNotIn("truncated", event["metrics"])
 
     def test_recording_and_health_filters_reject_non_allowlisted_or_bad_values(self) -> None:
-        model = NvrTelemetryModel(sample_interval_seconds=300)
+        model = NvrTelemetryModel()
         events = model.events(
             "sample-site", {1: {"recording": {
                 "recording_query_ok": True, "recording_recent": True,
@@ -282,8 +282,7 @@ class NvrTelemetryModelTests(unittest.TestCase):
 
         asyncio.run(populate())
         state = {1: store.telemetry_snapshot(1)}
-        model = NvrTelemetryModel(sample_interval_seconds=300)
-        model.observe(state, now_ms=2_000)
+        model = NvrTelemetryModel()
         events = model.events("sample-site", state, now_ms=2_000, dropped_events=0)
         by_kind = {event["kind"]: event for event in events}
         self.assertEqual(by_kind["nvr.live"]["metrics"]["error_code"], "rtsp_timeout")
@@ -291,24 +290,20 @@ class NvrTelemetryModelTests(unittest.TestCase):
             by_kind["nvr.recording"]["metrics"]["error_code"], "recording_query_failed"
         )
 
-    def test_ring_evicts_samples_older_than_24_hours(self) -> None:
-        model = NvrTelemetryModel(sample_interval_seconds=300)
-        old = 1_000
-        model.observe({1: {"live_video": True}}, now_ms=old)
-        model.observe({1: {"live_video": False}}, now_ms=old + 86_400_001)
+    def test_live_event_does_not_send_24_hour_aggregates_to_center(self) -> None:
+        model = NvrTelemetryModel()
         event = model.events(
             site_id="sample-site",
             channel_states={1: {"live_video": False, "recording_query_ok": False,
                                 "recording_recent": None, "last_recording": None,
                                 "error_code": None}},
-            now_ms=old + 86_400_001,
+            now_ms=1_000,
             dropped_events=0,
         )[0]
-        self.assertEqual(event["metrics"]["live_sample_count_24h"], 1)
-        self.assertEqual(event["metrics"]["disconnect_count_24h"], 0)
+        self.assertEqual(event["metrics"], {"live_video": False, "error_code": None})
 
     def test_events_are_sanitized_and_follow_center_contract(self) -> None:
-        model = NvrTelemetryModel(sample_interval_seconds=300)
+        model = NvrTelemetryModel()
         states = {
             7: {
                 "live_video": True,
@@ -318,7 +313,6 @@ class NvrTelemetryModelTests(unittest.TestCase):
                 "error_code": "unallowlisted_detail",
             }
         }
-        model.observe(states, now_ms=1_000)
         events = model.events("sample-site", states, now_ms=1_000, dropped_events=3)
         self.assertEqual({event["kind"] for event in events}, {
             "nvr.live", "nvr.recording", "producer.health"
@@ -339,7 +333,7 @@ class NvrTelemetryModelTests(unittest.TestCase):
         )
 
     def test_producer_health_is_explicitly_allowlisted_and_has_no_options(self) -> None:
-        model = NvrTelemetryModel(sample_interval_seconds=300)
+        model = NvrTelemetryModel()
         events = model.events(
             "sample-site", {1: {}}, now_ms=1_000, dropped_events=3,
             producer_health={

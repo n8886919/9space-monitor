@@ -31,7 +31,7 @@ OPTIONS_PATH = "/data/options.json"
 QUEUE_TIMEOUT_MS = 300
 DEFAULT_SNAPSHOT_CONCURRENCY = 1
 MAX_SNAPSHOT_CONCURRENCY = 8
-ADDON_VERSION = "0.3.7"
+ADDON_VERSION = "0.3.8"
 
 _sem: Optional[asyncio.Semaphore] = None
 
@@ -54,7 +54,7 @@ _recording_first_round_ready = threading.Event()
 
 
 async def _telemetry_loop() -> None:
-    """Observe already-known channel state and best-effort push safe metadata.
+    """Push current channel state as best-effort safe metadata.
 
     This intentionally never calls an NVR service.  The queue's ``put_nowait``
     path means Center latency or an outage cannot delay snapshot handlers or
@@ -67,7 +67,7 @@ async def _telemetry_loop() -> None:
     if center_url is None or metadata is None:
         return
     site_id, display_name = metadata
-    # A 30-second lower bound keeps even misconfigured 24-hour rings bounded.
+    # A 30-second lower bound prevents a stale option from flooding Center.
     interval_seconds = max(30, int(_opt(opts, "telemetry_interval_seconds", 300)))
     producer = TelemetryProducer(
         center_url=center_url,
@@ -75,7 +75,7 @@ async def _telemetry_loop() -> None:
         display_name=display_name,
         queue_max_batches=max(1, int(_opt(opts, "telemetry_queue_max_batches", 100))),
     )
-    model = NvrTelemetryModel(sample_interval_seconds=interval_seconds)
+    model = NvrTelemetryModel()
     producer.start()
     try:
         while True:
@@ -84,7 +84,6 @@ async def _telemetry_loop() -> None:
                 channel_id: _channel_store.telemetry_snapshot(channel_id)
                 for channel_id in telemetry_channel_ids(_load_options().get("channel_count"))
             }
-            model.observe(channel_states, now_ms=now_ms)
             events = model.events(
                 site_id,
                 channel_states,
@@ -442,16 +441,13 @@ def _channel_status(channel_id: int) -> dict:
     return {
         "channel_id": channel_id,
         "live_video": state["live_video"],
+        "live_checked_at": state["live_checked_at"],
         "snapshot_available": bool(cached and cached.ok and cached.jpeg),
         "recording_query_ok": state["recording_query_ok"],
         "recording_recent": state["recording_recent"],
         "last_recording": state["last_recording"],
         "recording_files_24h": state["recording_files_24h"],
         "recording_coverage_24h": state["recording_coverage_24h"],
-        "daily_online_rate": state["daily_online_rate"],
-        "nvr_live_video_disconnect_count_24h": state[
-            "nvr_live_video_disconnect_count_24h"
-        ],
         "checked_at": state["checked_at"],
         "error_code": state["error_code"],
     }

@@ -89,14 +89,13 @@ Response：
   {
     "channel_id": 1,
     "live_video": true,
+    "live_checked_at": "2026-08-01T21:31:00+08:00",
     "snapshot_available": true,
     "recording_query_ok": true,
     "recording_recent": true,
     "last_recording": "2026-08-01T21:30:00+08:00",
     "recording_files_24h": 42,
     "recording_coverage_24h": 97.5,
-    "daily_online_rate": 92.5,
-    "nvr_live_video_disconnect_count_24h": 3,
     "checked_at": "2026-08-01T21:31:00+08:00",
     "error_code": null
   }
@@ -106,8 +105,9 @@ Response：
 `recording_files_24h` 是最近一次成功錄影查詢中的有效片段數；
 `recording_coverage_24h` 是有效片段在過去 24 小時覆蓋的時間比例。
 兩者在錄影查詢失敗或尚無成功結果時為 `null`。`daily_online_rate` 與
-`nvr_live_video_disconnect_count_24h` 只使用 add-on 內的 bounded 24 小時 RAM
-samples；斷線只計已在線後轉為非在線狀態，不把首次觀察為離線算成斷線。
+`nvr_live_video_disconnect_count_24h` 不由 add-on API 提供；integration 使用
+`live_video` 與 `live_checked_at` 在本機 bounded RAM 計算，並由 Home Assistant
+Recorder 作為唯一持久化歷史。舊 add-on RAM history 不 migration。
 
 ### `GET /api/v1/channels/{channel_id}`
 
@@ -217,14 +217,14 @@ Snapshot 保持由 add-on demand-driven capture 與 cache 提供。M5F 起 `max_
 
 - Legacy API 在同事完成 center migration 前保持不變。
 - `/api/v1` 可以增加 optional 欄位。
-- 不刪除或重新命名既有 `/api/v1` 欄位，除非同步修改 integration 並記錄 breaking change。
+- 不刪除或重新命名既有 `/api/v1` 欄位，除非同步修改 integration 並記錄 breaking change。0.3.8 已同步把 live 24 小時 aggregates 移至 integration。
 - local `/api/v1` 不加入 Center-specific path、site registry 或 multi-site schema；M5 Center 使用獨立 telemetry ingest contract。
 
 ## M5 Center telemetry contract
 
 Center 接收兩類 sanitized batch，皆不含 JPEG、credentials、Authorization、完整 RTSP/CGI URL、raw CGI body 或 snapshot body：
 
-1. Add-on NVR telemetry：channel live/recording 狀態、24 小時 aggregates、probe/query/snapshot metadata、allowlisted Dahua diagnostics。
+1. Add-on NVR telemetry：channel 當下 live/recording 狀態、recording query aggregates、probe/query/snapshot metadata、allowlisted Dahua diagnostics；不含 live 24 小時 history、在線率或斷線次數。
 2. Integration HA telemetry：allowlisted System Monitor、RPi Power、Fast.com entity states。
 
 System Monitor 的 M5 allowlist 包含 disk／memory／load／temperature，以及
@@ -237,7 +237,7 @@ IDs 或衍生 rollups 上送 Center。其餘 HA metrics 的 channel ID 為 `null
 Producer 規則：
 
 - 非阻塞、短 timeout；Center 失聯不得影響 NVR probe、integration coordinator 或 HA startup。
-- producer 不保存 telemetry history 至磁碟；只保有 24 小時 RAM ring 與 bounded memory queue。
+- producer 不保存 telemetry history；只保有 bounded memory queue。
 - queue 滿或 server 不可達時允許丟棄資料，並以 sanitized counter metadata 回報。
 - Center 保存七日；單站採 logical 保守水位，並以 2 GiB 實體檔 fail-closed guard 保護主機容量。具體預設值待 Center 實作完成後以測試核對。
 - `site_id` 為穩定 ASCII identifier，display name 另存；承德原型為 `chengde`／「承德」。

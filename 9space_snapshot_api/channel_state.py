@@ -8,15 +8,9 @@ themselves. Background loops in ``background.py`` are the only writers.
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import time
 from typing import Dict, Mapping, Optional
-
-
-_LIVE_WINDOW_MS = 24 * 60 * 60 * 1000
-_LIVE_SAMPLE_CAPACITY = 4096
 
 
 def _iso(ts_ms: int) -> str:
@@ -83,6 +77,11 @@ class ChannelState:
         checked_ms = self._checked_at_ms()
         return {
             "live_video": self.live_video,
+            "live_checked_at": (
+                _iso(self.live_checked_at_ms)
+                if self.live_checked_at_ms is not None
+                else None
+            ),
             "recording_query_ok": self.recording_query_ok,
             "recording_recent": self.recording_recent,
             "last_recording": self.last_recording,
@@ -97,42 +96,6 @@ class ChannelStateStore:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._states: Dict[int, ChannelState] = {}
-        self._live_samples: dict[int, deque[tuple[int, Optional[bool]]]] = defaultdict(
-            lambda: deque(maxlen=_LIVE_SAMPLE_CAPACITY)
-        )
-
-    def _observe_live(
-        self, channel_id: int, checked_at_ms: int, live_video: Optional[bool]
-    ) -> None:
-        samples = self._live_samples[channel_id]
-        cutoff = checked_at_ms - _LIVE_WINDOW_MS
-        while len(samples) > 1 and samples[1][0] < cutoff:
-            samples.popleft()
-        samples.append((checked_at_ms, live_video))
-
-    def _live_aggregates(self, channel_id: int, now_ms: int) -> dict[str, int | float | None]:
-        samples = self._live_samples.get(channel_id)
-        if not samples:
-            return {
-                "daily_online_rate": None,
-                "nvr_live_video_disconnect_count_24h": 0,
-            }
-        cutoff = now_ms - _LIVE_WINDOW_MS
-        relevant = list(samples)
-        observed = [value for timestamp, value in relevant if timestamp >= cutoff]
-        known = [value for value in observed if type(value) is bool]
-        disconnects = sum(
-            previous is True and current is not True and current_timestamp >= cutoff
-            for (_previous_timestamp, previous), (current_timestamp, current) in zip(
-                relevant, relevant[1:]
-            )
-        )
-        return {
-            "daily_online_rate": (
-                sum(value is True for value in known) * 100 / len(known) if known else None
-            ),
-            "nvr_live_video_disconnect_count_24h": disconnects,
-        }
 
     def _get_or_create(self, channel_id: int) -> ChannelState:
         state = self._states.get(channel_id)
@@ -154,7 +117,6 @@ class ChannelStateStore:
             state.live_video = live_video
             state.live_checked_at_ms = checked_at_ms
             state.live_error = error_code
-            self._observe_live(channel_id, checked_at_ms, live_video)
 
     async def update_recording(
         self,
@@ -186,7 +148,6 @@ class ChannelStateStore:
             state.live_video = False
             state.live_checked_at_ms = checked_at_ms
             state.live_error = error_code
-            self._observe_live(channel_id, checked_at_ms, False)
 
     async def mark_recording_internal_error(
         self, channel_id: int, *, checked_at_ms: int, error_code: str = "internal_error"
@@ -203,7 +164,7 @@ class ChannelStateStore:
             state.recording_error = error_code
             state.recording_metrics = {}
 
-    def snapshot(self, channel_id: int, *, now_ms: int | None = None) -> dict:
+    def snapshot(self, channel_id: int) -> dict:
         """Read the latest known state for one channel (non-blocking,
         no lock -- dict attribute reads/writes are already atomic under
         the GIL and this is only ever read from the API handlers)."""
@@ -220,10 +181,6 @@ class ChannelStateStore:
                 "recording_coverage_24h": metrics.get("recording_coverage_24h_pct"),
             }
         )
-        aggregate_now = now_ms
-        if aggregate_now is None:
-            aggregate_now = int(time.time() * 1000)
-        result.update(self._live_aggregates(channel_id, aggregate_now))
         return result
 
     def telemetry_snapshot(self, channel_id: int) -> dict:
@@ -252,4 +209,3 @@ class ChannelStateStore:
 
     def clear(self) -> None:
         self._states.clear()
-        self._live_samples.clear()
