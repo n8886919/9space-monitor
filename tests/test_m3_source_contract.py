@@ -34,9 +34,9 @@ class M3SourceContractTests(unittest.TestCase):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
         self.assertNotIn("icmplib", " ".join(manifest.get("requirements", [])))
 
-    def test_manifest_version_is_0_2_3(self):
+    def test_manifest_version_is_0_2_4(self):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
-        self.assertEqual("0.2.3", manifest.get("version"))
+        self.assertEqual("0.2.4", manifest.get("version"))
 
     def test_snapshot_camera_platform_and_client_are_removed(self):
         const = (INTEGRATION / "const.py").read_text()

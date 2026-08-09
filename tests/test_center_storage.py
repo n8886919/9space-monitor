@@ -48,34 +48,6 @@ def batch(
     )
 
 
-def ping_batch(site_id: str, events: list[dict]):
-    """Build sanitized integration Ping events without HA entity IDs."""
-    prepared = []
-    for index, event in enumerate(events):
-        timestamp_ms = event["timestamp_ms"]
-        prepared.append(
-            {
-                "event_id": hashlib.sha256(
-                    f"integration|{site_id}|ha.ping|{event['channel_id']}|{event['name']}".encode()
-                ).hexdigest(),
-                "timestamp": datetime.fromtimestamp(
-                    timestamp_ms / 1000, timezone.utc
-                ).isoformat(),
-                "kind": "ha.ping",
-                "channel_id": event["channel_id"],
-                "metrics": event["metrics"],
-            }
-        )
-    return validate_batch(
-        {
-            "site_id": site_id,
-            "display_name": "測試站",
-            "source": "integration",
-            "events": prepared,
-        }
-    )
-
-
 class CenterStorageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -183,60 +155,6 @@ class CenterStorageTests(unittest.TestCase):
             [row["event_id"] for row in latest],
             [hashlib.sha256(b"addon|chengde|nvr.live|1|newer").hexdigest()],
         )
-
-    def test_ping_summary_uses_timestamp_windows_and_preserves_current_available(self) -> None:
-        storage = TelemetryStorage(self.path)
-        hour = 60 * 60 * 1000
-        day = 24 * hour
-        events = [
-            {"name": "hour-boundary", "timestamp_ms": NOW_MS - hour, "channel_id": 1, "metrics": {"rtt_ms": 10.0, "packet_loss_percent": 2.0}},
-            {"name": "outside-hour", "timestamp_ms": NOW_MS - hour - 1, "channel_id": 1, "metrics": {"rtt_ms": 99.0}},
-            {"name": "day-boundary", "timestamp_ms": NOW_MS - day, "channel_id": 1, "metrics": {"rtt_ms": 30.0, "packet_loss_percent": 5.0}},
-            {"name": "outside-day", "timestamp_ms": NOW_MS - day - 1, "channel_id": 1, "metrics": {"rtt_ms": 88.0}},
-            {"name": "state", "timestamp_ms": NOW_MS - 20_000, "channel_id": 1, "metrics": {"state": "on"}},
-            {"name": "available", "timestamp_ms": NOW_MS - 10_000, "channel_id": 1, "metrics": {"available": True}},
-            {"name": "newest-rtt", "timestamp_ms": NOW_MS - 5_000, "channel_id": 1, "metrics": {"rtt_ms": 20.0}},
-            {"name": "newest-loss", "timestamp_ms": NOW_MS - 4_000, "channel_id": 1, "metrics": {"packet_loss_percent": 1.0}},
-            {"name": "channel-two", "timestamp_ms": NOW_MS - 2_000, "channel_id": 2, "metrics": {"rtt_ms": 40.0}},
-            {"name": "channel-three", "timestamp_ms": NOW_MS - 3_000, "channel_id": 3, "metrics": {"available": False}},
-        ]
-        result = storage.ingest(ping_batch("chengde", events + [events[0]]), now_ms=NOW_MS)
-        self.assertEqual(result.duplicates, 1)
-        expired = storage.ingest(
-            ping_batch("chengde", [{"name": "expired", "timestamp_ms": NOW_MS - 8 * day, "channel_id": 4, "metrics": {"rtt_ms": 1.0}}]),
-            now_ms=NOW_MS,
-        )
-        self.assertEqual(expired.expired, 1)
-        storage.ingest(
-            ping_batch("other-site", [{"name": "other", "timestamp_ms": NOW_MS, "channel_id": 1, "metrics": {"rtt_ms": 999.0}}]),
-            now_ms=NOW_MS,
-        )
-
-        summary = storage.ping_summary("chengde", now_ms=NOW_MS)
-        self.assertEqual([1, 2, 3], [item["channel_id"] for item in summary])
-        first = summary[0]
-        self.assertEqual(
-            {"available": True, "state": "on", "rtt_ms": 20.0, "packet_loss_percent": 1.0},
-            first["current"],
-        )
-        self.assertEqual({"mean": 15.0, "count": 2}, first["windows"]["1h"]["rtt_ms"])
-        self.assertEqual({"mean": 1.5, "count": 2}, first["windows"]["1h"]["packet_loss_percent"])
-        self.assertEqual({"mean": 39.75, "count": 4}, first["windows"]["24h"]["rtt_ms"])
-        self.assertEqual({"mean": 8 / 3, "count": 3}, first["windows"]["24h"]["packet_loss_percent"])
-        self.assertEqual({"mean": 40.0, "count": 1}, summary[1]["windows"]["1h"]["rtt_ms"])
-        self.assertEqual({"mean": None, "count": 0}, summary[1]["windows"]["1h"]["packet_loss_percent"])
-        self.assertEqual(
-            {"available": False, "state": None, "rtt_ms": None, "packet_loss_percent": None},
-            summary[2]["current"],
-        )
-        self.assertEqual({"mean": None, "count": 0}, summary[2]["windows"]["24h"]["rtt_ms"])
-        # Existing latest intentionally retains one whole event and therefore
-        # omits older state/availability/rtt fields. The summary keeps all four.
-        latest_channel_one = next(
-            item for item in storage.latest("chengde", now_ms=NOW_MS)
-            if item["source"] == "integration" and item["kind"] == "ha.ping" and item["channel_id"] == 1
-        )
-        self.assertEqual({"packet_loss_percent": 1.0}, latest_channel_one["metrics"])
 
     def test_future_timestamp_beyond_skew_is_rejected(self) -> None:
         storage = TelemetryStorage(self.path, future_skew_seconds=300)

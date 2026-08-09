@@ -2,7 +2,7 @@
 
 ## 目的
 
-本文件定義單一站點的手動 SSH 部署，是 canonical deployment reference。部署任務已授權其中 bounded、可回復的 preflight、upload、restart 與 smoke verification，不需在每個步驟重複請示。
+本文件定義單一站點的手動部署，是 canonical deployment reference。部署任務已授權其中 bounded、可回復的 preflight、Supervisor update、integration upload、restart 與 smoke verification，不需在每個步驟重複請示。
 
 本文件是部署說明，不是自動化腳本。
 
@@ -11,6 +11,7 @@
 - GitHub Actions deployment
 - self-hosted runner
 - 多站點 rollout
+- 把 Snapshot add-on source 上傳到 HA local `/addons`
 - 自動修改 Home Assistant `.storage`
 - 自動 config-entry migration
 
@@ -19,13 +20,15 @@
 - `8122` 是獨立舊正式服務，永久禁止操作。
 - 不得對 `8122` 執行 test、restart、rebuild、reload、modify，亦不得把 `8122` 當成 integration URL。
 - 本 repository 的 monorepo add-on 版本為 `0.3.5`，host port 是 `8222`，container port 是 `8000`。
+- Snapshot add-on 只能由 HA 已設定的 Supervisor managed repository 安裝與更新；不得以 tar／scp 寫入 local `/addons`，也不得把 local source 當更新失敗時的替代路徑。
+- Center 是獨立 container service，依 `center/README.md` 從 Git checkout 部署；它不是 HA add-on，不得安裝到 HA local `/addons`。
 - Supervisor add-on identifier／slug 與 internal hostname 不可混用。
-- 唯讀 version gate 只有在遠端 source 與已安裝 add-on 都是 `0.3.5` 時才通過；不得因舊版 endpoint 可用就跳過必要的 add-on deployment。
-- 若任務已要求部署，add-on／integration 的 scoped upload、rebuild、restart 與 verify 可依本文件連續完成；操作 `8122`、`.storage`、destructive rollback、schema／auth 或 public exposure 仍須另行明確確認。
+- 唯讀 version gate 只有在 Supervisor 已安裝 add-on 是 `0.3.5` 時才通過；不得因舊版 endpoint 可用就跳過必要的 repository update。
+- 若任務已要求部署，add-on 的 managed update 或 integration 的 scoped upload、restart 與 verify 可依本文件連續完成；操作 `8122`、`.storage`、destructive rollback、schema／auth 或 public exposure 仍須另行明確確認。
 - 不得直接編輯 `/config/.storage/core.config_entries` 或其他 `.storage` 檔案。
 - 不得自動建立或接受帶有 `_2` 後綴的 replacement entities。
 - 唯讀操作不備份。只有真正要修改的 component 才在 mutation 前建立 scoped rollback。
-- `.storage`／config-entry backup 只在確定要變更 config entry 前建立；普通 source deployment 不建立 full backup。
+- `.storage`／config-entry backup 只在確定要變更 config entry 前建立；add-on update 使用 Supervisor 的 scoped partial backup，不建立 source copy。
 
 ## 變數
 
@@ -37,12 +40,11 @@ export HA_SSH_PORT="22"
 export HA_USER="root"
 export REMOTE="${HA_USER}@${HA_HOST}"
 
-export ADDON_DIR_NAME="9space_snapshot_api"
-export ADDON_REMOTE_DIR="/addons/${ADDON_DIR_NAME}"
 export INTEGRATION_DOMAIN="nvr_monitor"
 export INTEGRATION_REMOTE_DIR="/config/custom_components/${INTEGRATION_DOMAIN}"
 
 export ADDON_SLUG="<actual-supervisor-addon-slug>"
+export ADDON_TARGET_VERSION="0.3.5"
 export ADDON_HOSTNAME="afa94ae2-9space-snapshot-addon"
 export ADDON_HOST_PORT="8222"
 export ADDON_CONTAINER_PORT="8000"
@@ -53,6 +55,7 @@ export INTEGRATION_BASE_URL="http://${ADDON_HOSTNAME}:${ADDON_CONTAINER_PORT}"
 
 - `ADDON_SLUG`：只供 `ha apps ...` 指令使用。
 - `ADDON_SLUG`：必須以 Supervisor 實際輸出為準；目前觀察到的 identifier 是 `afa94ae2_9space_snapshot_addon`。
+- `ADDON_TARGET_VERSION`：必須等於已發布至既有 Supervisor repository 的 `config.yaml` version；不能只存在未 push 的 local checkout。
 - `ADDON_HOSTNAME`：只供 Home Assistant Core 連到 add-on container。
 - `ADDON_HOST_PORT`：只供 host-side smoke test。
 - `ADDON_CONTAINER_PORT`：add-on container 內固定監聽 port，現值 `8000`。
@@ -78,24 +81,23 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" '
   set -eu
   command -v ha
   test -d /config
-  test -d /addons
   ha core info >/dev/null
 '
 ```
 
-確認 Supervisor 看到的 add-on slug，避免把 slug 與 hostname 混用：
+確認 Supervisor 看到的 add-on slug 與目前版本，避免把 slug 與 hostname 混用：
 
 ```bash
 ssh -p "$HA_SSH_PORT" "$REMOTE" \
-  "ha apps list | grep -i -A4 -B2 '9space\|snapshot'"
+  "ha apps list | grep -i -A4 -B2 '9space\|snapshot'; ha apps info '$ADDON_SLUG'"
 ```
 
-若輸出與預期不同，先停止並回報實際結果，再更新本次操作使用的 `ADDON_SLUG`。不要自行猜測。
+在 Home Assistant UI 的 `Settings > Apps > App store > ⋮ > Repositories` 唯讀確認這個 slug 來自既有的預期 Git repository。若 repository、slug 或輸出與預期不同，先停止並回報實際結果；不要新增／替換 repository，也不要自行猜測。
 
 ## 路徑選擇
 
 - 唯讀 preflight、smoke 與 observation 不建立備份，也不建立 rollback artifact。
-- Add-on source deployment 只保留一份 rolling `.old` source；不另外複製 integration 或 `.storage`。
+- Add-on 只走 Supervisor managed repository；更新時由 `ha apps update --backup` 建立 scoped partial backup，不複製 source。
 - Integration source deployment 使用同 filesystem transaction 的 `integration_replaced` 作 rollback；完成驗證後清除 transaction。
 - 只有實際要執行 UI Reconfigure 時，才備份一次 `core.config_entries`。
 - `.storage` migration、destructive cleanup、schema／auth 變更不屬 routine deployment；另做精確 plan 與 task-specific backup。
@@ -104,9 +106,8 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 
 Snapshot API smoke test 是 add-on API 與未來 Center/server 的 contract 驗證；integration 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
 
-只有遠端 source 和 Supervisor 已安裝版本都明確為 `0.3.5`，且以下唯讀檢查都正常時，才可跳過 add-on 上傳、rebuild 與 restart：
+只有 Supervisor 已安裝版本明確為 `0.3.5`，且以下唯讀檢查都正常時，才可跳過 add-on repository update：
 
-- `${ADDON_REMOTE_DIR}/config.yaml` 的 `version: "0.3.5"`
 - `ha apps info "$ADDON_SLUG"` 顯示 version `0.3.5`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/healthz`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/camera/1`
@@ -117,12 +118,11 @@ Snapshot API smoke test 是 add-on API 與未來 Center/server 的 contract 驗�
 ```bash
 ssh -p "$HA_SSH_PORT" "$REMOTE" "
   set -eu
-  grep -Fx 'version: \"0.3.5\"' '$ADDON_REMOTE_DIR/config.yaml'
-  ha apps info '$ADDON_SLUG' | grep -Eq 'version:[[:space:]]*0\\.3\\.5([[:space:]]|\$)'
+  ha apps info '$ADDON_SLUG' | grep -Eq 'version:[[:space:]]*$ADDON_TARGET_VERSION([[:space:]]|\$)'
 "
 ```
 
-任一版本檢查或 smoke test 失敗時，不得以 `8122` 作替代驗證。若任務只要求驗證／observation，回報實際結果後停止；若任務已要求部署且目標、slug、topology 均已確認，才進入下方 Add-on source deployment。
+任一版本檢查或 smoke test 失敗時，不得以 `8122` 作替代驗證。若任務只要求驗證／observation，回報實際結果後停止；若任務已要求部署且既有 repository、目標 version、slug 與 topology 均已確認，才進入下方 Add-on managed repository deployment。
 
 host-side smoke test 範例：
 
@@ -195,70 +195,51 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 若以上版本 gate 與全部 smoke tests 都正常：
 
-1. 不上傳 add-on source。
-2. 不執行 `ha apps rebuild`。
-3. 不執行 `ha apps restart`。
-4. 若任務只要求 smoke／observation，到此停止，不建立任何備份。
-5. 只有任務明確包含 integration source deployment 時，才進入 Integration 部署。
+1. 不更新 add-on，也不建立 add-on backup。
+2. 若任務只要求 smoke／observation，到此停止。
+3. 只有任務明確包含 integration source deployment 時，才進入 Integration 部署。
 
 若任一項失敗：
 
 1. 保留並回報實際錯誤。
-2. 已要求部署且目標明確時走下方 Add-on source deployment；目標或 topology 不明時停止。
+2. 已要求部署且 repository 與目標明確時走下方 Add-on managed repository deployment；目標或 topology 不明時停止。
 
-## Add-on source deployment
+## Add-on managed repository deployment
 
-遠端 add-on source／installed version 不符，而任務已要求部署時使用以下步驟。
+已安裝版本落後，而任務已要求部署時使用以下步驟。目標版本必須先通過測試、增加 `9space_snapshot_api/config.yaml` version，並已 push 至 HA 現有 Git repository；本流程不負責 commit、push 或變更 HA repository 設定。
 
-本路徑不建立 timestamped full backup。`$ADDON_REMOTE_DIR.old` 是唯一 rolling rollback source；每次 mutation 前以目前 canonical source 更新它，因此最多保留一份。
+### 1. 刷新既有 repository 並確認 update
 
-### 1. 上傳 add-on source
+在 Home Assistant UI 開啟 `Settings > Apps > App store`，使用右上角選單的檢查更新／reload 動作。只刷新已存在且 preflight 已確認的 repository，不新增、刪除或替換 repository。
 
-使用 tar，避免直接在遠端逐檔修改：
-
-```bash
-tar -C . -czf /tmp/9space_snapshot_api.tgz 9space_snapshot_api
-
-scp -P "$HA_SSH_PORT" \
-  /tmp/9space_snapshot_api.tgz \
-  "$REMOTE:/tmp/9space_snapshot_api.tgz"
-
-ssh -p "$HA_SSH_PORT" "$REMOTE" "
-  set -eu
-  rm -rf '$ADDON_REMOTE_DIR.new'
-  mkdir -p '$ADDON_REMOTE_DIR.new'
-  tar -xzf /tmp/9space_snapshot_api.tgz \
-    --strip-components=1 \
-    -C '$ADDON_REMOTE_DIR.new'
-  test -f '$ADDON_REMOTE_DIR.new/config.yaml'
-
-  rm -rf '$ADDON_REMOTE_DIR.old'
-  if [ -d '$ADDON_REMOTE_DIR' ]; then
-    mv '$ADDON_REMOTE_DIR' '$ADDON_REMOTE_DIR.old'
-  fi
-  mv '$ADDON_REMOTE_DIR.new' '$ADDON_REMOTE_DIR'
-  rm -f /tmp/9space_snapshot_api.tgz
-  ha apps reload
-"
-```
-
-### 2. Rebuild／restart add-on
-
-先確認 `ADDON_SLUG`，再執行：
+刷新後再次檢查：
 
 ```bash
 ssh -p "$HA_SSH_PORT" "$REMOTE" "
   set -eu
-  ha apps rebuild '$ADDON_SLUG'
-  ha apps restart '$ADDON_SLUG'
+  ha apps info '$ADDON_SLUG'
 "
 ```
 
-若目前 HA CLI 不支援 `rebuild`，不要猜替代命令；回報實際 `ha apps --help` 輸出並停止這條路徑。
+輸出或 UI 必須明確顯示目標 `ADDON_TARGET_VERSION` 可更新。若 repository 尚未取得目標版本、顯示其他 source，或 CLI／UI 無法確認，停止並回報；不得 fallback 到 HA local add-on source。
+
+### 2. Supervisor update
+
+以 Supervisor 提供的 update 交易更新至 repository 最新版，並在更新前建立 partial backup：
+
+```bash
+ssh -p "$HA_SSH_PORT" "$REMOTE" "
+  set -eu
+  ha apps update --backup '$ADDON_SLUG'
+  ha apps info '$ADDON_SLUG' | grep -Eq 'version:[[:space:]]*$ADDON_TARGET_VERSION([[:space:]]|\$)'
+"
+```
+
+`ha apps update` 只更新至 repository 最新版，不能指定降版。若命令、build 或啟動失敗，保留 Supervisor 狀態與 partial backup，回報實際錯誤並停止；不要手動寫入 `/addons`、不要改用 local install，也不要自行執行額外 rebuild／restart 掩蓋失敗。
 
 ### 3. Add-on smoke test
 
-Add-on source deployment 完成後，只驗證 monorepo add-on host port，不得碰 `8122`：
+Add-on managed repository update 完成後，只驗證 monorepo add-on host port，不得碰 `8122`：
 
 ```bash
 test "$ADDON_HOST_PORT" = "8222"
@@ -364,6 +345,10 @@ filter_logs_after_marker() {
 
 ### 1. 上傳 integration
 
+Local-only Ping correction 的 rollout 必須先部署 integration `0.2.4`，確認舊
+`ha.ping` mapping 已被 local filter 排除，再部署拒收 `ha.ping` 的 Center code。
+不得反向部署，以免舊 integration 的 mixed batch 被 Center 整批拒絕。
+
 ```bash
 tar -C custom_components -czf /tmp/nvr_monitor.tgz nvr_monitor
 awk '/DEPLOY_LAYOUT_HELPER_BEGIN/{keep=1} keep{print} /DEPLOY_LAYOUT_HELPER_END/{exit}' DEPLOY.md \
@@ -378,7 +363,7 @@ scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh \
 
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
-EXPECTED_VERSION="0.2.3"
+EXPECTED_VERSION="0.2.4"
 CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
 mkdir -p /config/9space_deploy
 ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nvr-monitor.XXXXXX)
@@ -526,7 +511,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 
 ### 完成 integration transaction
 
-只有 integration source、Core recovery、restart 後 log 與必要 UI 驗證全部通過，而且確定不需 rollback 後，才清除本次 transaction。Add-on 的 `$ADDON_REMOTE_DIR.old` 保留為唯一 rolling rollback，不另累積 timestamped copy。
+只有 integration source、Core recovery、restart 後 log 與必要 UI 驗證全部通過，而且確定不需 rollback 後，才清除本次 transaction。Add-on 由 Supervisor managed repository 與其 partial backup 管理，不建立或保留 local source artifact。
 
 ```bash
 DEPLOY_ARTIFACT_DIR="<recorded-deploy-artifact-dir>"
@@ -582,20 +567,14 @@ Rollback 使用相同 helper；還原 integration source 後必須先通過 `ha 
 
 ### Add-on rollback
 
-下列 add-on rollback 會刪除目前 source，屬 destructive rollback；只有在使用者明確確認精確目標後才執行：
+HA CLI 的 `ha apps update` 不能指定降版，因此 routine rollback 不可把舊 source 放回 `/addons`，也不可改用 local install。標準方式是 **forward rollback**：
 
-```bash
-ssh -p "$HA_SSH_PORT" "$REMOTE" "
-  set -eu
-  rm -rf '$ADDON_REMOTE_DIR'
-  if [ -d '$ADDON_REMOTE_DIR.old' ]; then
-    mv '$ADDON_REMOTE_DIR.old' '$ADDON_REMOTE_DIR'
-  fi
-  ha apps reload
-  ha apps rebuild '$ADDON_SLUG'
-  ha apps restart '$ADDON_SLUG'
-"
-```
+1. 在 Git repository revert 問題變更。
+2. 將 `config.yaml` version 提升為高於問題版本的新版本，完成相同測試後 push。
+3. 在 HA App store 刷新既有 repository，確認新修復版本可用。
+4. 再依本文件執行 `ha apps update --backup` 與 smoke tests。
+
+若要還原 update 建立的 Supervisor partial backup，屬可能回復其他 scoped add-on 狀態的 destructive restore；必須先確認精確 backup 與影響範圍並取得使用者明確批准。不得自行 restore，也不得以 force push、history rewrite 或 local source swap 取代 forward rollback。
 
 ## 部署完成紀錄
 
@@ -606,8 +585,9 @@ date:
 git commit:
 site alias:
 add-on version:
+add-on repository: existing managed repository confirmed / not confirmed
+add-on update backup: created / not created
 integration version:
-add-on rollback source: .old / none
 integration transaction: removed / retained for rollback / none
 config-entry backup: path / not created
 smoke test:

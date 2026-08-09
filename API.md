@@ -215,11 +215,14 @@ Snapshot 保持由 add-on demand-driven capture 與 cache 提供。M5F 起 `max_
 Center 接收兩類 sanitized batch，皆不含 JPEG、credentials、Authorization、完整 RTSP/CGI URL、raw CGI body 或 snapshot body：
 
 1. Add-on NVR telemetry：channel live/recording 狀態、24 小時 aggregates、probe/query/snapshot metadata、allowlisted Dahua diagnostics。
-2. Integration HA telemetry：allowlisted Ping、System Monitor、RPi Power、Fast.com entity states。
+2. Integration HA telemetry：allowlisted System Monitor、RPi Power、Fast.com entity states。
 
 System Monitor 的 M5 allowlist 包含 disk／memory／load／temperature，以及
 `processor_use_percent`、`last_boot`（含時區 ISO 8601）與 `uptime_seconds`（unit `s`）。
-Ping mapping 必須明確指定 Center-safe channel ID；其餘 HA metrics 的 channel ID 為 `null`。
+HA Ping (ICMP) entities、RTT 與 packet loss 僅留在 Home Assistant local，不屬於
+Center telemetry contract。Local dashboard 可直接以原生 Ping entities 與 recorder
+statistics 顯示目前狀態、rolling 1h 與 rolling 24h mean；不得把 Ping events、entity
+IDs 或衍生 rollups 上送 Center。其餘 HA metrics 的 channel ID 為 `null`。
 
 Producer 規則：
 
@@ -250,6 +253,7 @@ Center scheduler 使用每站手動 channel list；不得假設 channel count �
 
 - [x] Center Docker/SQLite metadata-only ingest/query/export API（M5A；不含 JPEG）。
 - [x] 依每站 mapping 產生 dashboard YAML renderer（M5D）。
+- [x] Ping (ICMP) 僅產生 Home Assistant local Lovelace／statistics cards，不進 Center。
 - [x] M5F Center 最新 snapshot API、bounded store/scheduler、UI 與統計；未修改 legacy local endpoint。
 - [ ] 同事完成切換後，停止直接呼叫 local legacy API。
 - [ ] 移除 local API 的不必要公網 port forwarding。

@@ -32,11 +32,6 @@ DEFAULT_PHYSICAL_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_PHYSICAL_RESERVE_BYTES = 128 * 1024 * 1024
 MAX_FUTURE_SKEW_SECONDS = 5 * 60
 MAX_SNAPSHOT_LATENCY_MS = 3_600_000.0
-PING_AGGREGATE_METRICS = ("rtt_ms", "packet_loss_percent")
-PING_AGGREGATE_WINDOWS_MS = {
-    "1h": 60 * 60 * 1000,
-    "24h": 24 * 60 * 60 * 1000,
-}
 
 
 class CapacityExceeded(RuntimeError):
@@ -565,92 +560,6 @@ class TelemetryStorage:
                 seen.add(key)
                 latest.append(self._decode_row(row))
         return latest
-
-    def ping_summary(self, site_id: str, *, now_ms: int | None = None) -> list[dict[str, Any]]:
-        """Return bounded, sanitized Ping rollups without relying on ``latest``.
-
-        A Ping producer can emit availability and numeric samples in separate
-        events.  Reading the raw retained rows here prevents the generic
-        latest-event deduplication view from hiding the current availability.
-        """
-        now_ms = int(time.time() * 1000) if now_ms is None else now_ms
-        self.prune(now_ms=now_ms)
-        with self._lock, self._connect() as connection:
-            rows = connection.execute(
-                "SELECT row_id, timestamp_ms, channel_id, metrics_json FROM events "
-                "WHERE site_id = ? AND kind = 'ha.ping' AND channel_id IS NOT NULL "
-                "AND timestamp_ms <= ? ORDER BY timestamp_ms DESC, row_id DESC",
-                (site_id, now_ms),
-            ).fetchall()
-
-        channels: dict[int, dict[str, Any]] = {}
-        for row in rows:
-            channel_id = int(row["channel_id"])
-            item = channels.setdefault(
-                channel_id,
-                {
-                    "current": {
-                        "available": None,
-                        "state": None,
-                        "rtt_ms": None,
-                        "packet_loss_percent": None,
-                    },
-                    "windows": {
-                        label: {
-                            metric: {"mean": None, "count": 0, "_sum": 0.0}
-                            for metric in PING_AGGREGATE_METRICS
-                        }
-                        for label in PING_AGGREGATE_WINDOWS_MS
-                    },
-                },
-            )
-            metrics = json.loads(row["metrics_json"])
-            # Rows are newest-first.  Retain every current Ping field
-            # independently, so a later rtt/loss event cannot hide a prior
-            # reachable/state event in the generic latest-event view.
-            current = item["current"]
-            if current["available"] is None and type(metrics.get("available")) is bool:
-                current["available"] = metrics["available"]
-            if current["state"] is None and isinstance(metrics.get("state"), str):
-                current["state"] = metrics["state"]
-            for metric in PING_AGGREGATE_METRICS:
-                value = metrics.get(metric)
-                if current[metric] is None and type(value) in {int, float}:
-                    current[metric] = value
-            timestamp_ms = int(row["timestamp_ms"])
-            for label, window_ms in PING_AGGREGATE_WINDOWS_MS.items():
-                if timestamp_ms < now_ms - window_ms:
-                    continue
-                for metric in PING_AGGREGATE_METRICS:
-                    value = metrics.get(metric)
-                    # Validation already enforces the schema; keep this narrow
-                    # check so booleans/non-numeric data can never aggregate.
-                    if type(value) not in {int, float}:
-                        continue
-                    aggregate = item["windows"][label][metric]
-                    aggregate["_sum"] += float(value)
-                    aggregate["count"] += 1
-
-        result: list[dict[str, Any]] = []
-        for channel_id in sorted(channels):
-            item = channels[channel_id]
-            windows: dict[str, dict[str, dict[str, float | int | None]]] = {}
-            for label, metrics in item["windows"].items():
-                windows[label] = {}
-                for metric, aggregate in metrics.items():
-                    count = aggregate["count"]
-                    windows[label][metric] = {
-                        "mean": None if count == 0 else aggregate["_sum"] / count,
-                        "count": count,
-                    }
-            result.append(
-                {
-                    "channel_id": channel_id,
-                    "current": item["current"],
-                    "windows": windows,
-                }
-            )
-        return result
 
     def usage(self) -> dict[str, Any]:
         with self._lock, self._connect() as connection:

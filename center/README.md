@@ -54,7 +54,9 @@ docker compose --env-file center/.env -f center/compose.yaml up -d --build
 - `site_id` 是通用 ASCII slug；中文名稱只放 `display_name`。
 - `source` 只能是 `addon` 或 `integration`。
 - `kind` 固定為：`nvr.live`、`nvr.recording`、`nvr.probe`、`nvr.snapshot`、
-  `ha.ping`、`ha.system`、`ha.rpi_power`、`ha.fastdotcom`、`producer.health`。
+  `ha.system`、`ha.rpi_power`、`ha.fastdotcom`、`producer.health`。
+- Ping (ICMP)、RTT 與 packet loss 留在 Home Assistant local，不由 Center ingest、
+  query、export 或 UI 處理。
 - `event_id` 只能是 64 位小寫 hex SHA-256。Producer 應對 canonical safe metadata
   （例如 source/site/kind/channel/timestamp/sequence）計算 hash；hash input 不得包含
   raw payload、credentials、URL、IP、entity ID 或影像內容。
@@ -72,18 +74,10 @@ docker compose --env-file center/.env -f center/compose.yaml up -d --build
 - `GET /api/v1/sites`
 - `GET /api/v1/sites/{site_id}/events?after_cursor=0&limit=1000`
 - `GET /api/v1/sites/{site_id}/latest`
-- `GET /api/v1/sites/{site_id}/ping-summary`
 - `GET /api/v1/sites/{site_id}/export.json?after_cursor=0&limit=1000`
 
 Export 與 query 共用相同 sanitized rows，最多 1000 筆一頁；用
 `next_cursor` 取得下一頁。沒有影像 export。
-
-Ping summary 以 event timestamp 分別計算每個 site/channel 的 `1h` 與 `24h`
-window；只輸出 allowlisted `rtt_ms` 與 `packet_loss_percent` 的 sample `mean`／
-`count`，無 sample 時 mean 為 `null`、count 為 `0`。每個 channel 的 `current` 對
-`available`、`state`、`rtt_ms`、`packet_loss_percent` 個別取最新合法值，因此不會被
-generic latest event 的去重行為遺失。Response 不含
-entity ID、credentials、URL、JPEG 或 raw payload。
 
 ## Retention與容量
 

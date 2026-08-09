@@ -72,7 +72,7 @@ class HATelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(telemetry.parse_mapping_json(json.dumps([{"entity_id": RAW_ENTITY, "kind": "ha.system", "metric": "download_mbps", "unit": "Mbps", "channel_id": None}])))
         self.assertIsNone(telemetry.parse_mapping_json(json.dumps([{"entity_id": RAW_ENTITY, "kind": "ha.system", "metric": "memory_used_percent", "unit": "%", "channel_id": 1}])))
         self.assertIsNone(telemetry.parse_mapping_json(json.dumps([{**PING_MAPPING, "channel_id": None}])))
-        self.assertIsNotNone(telemetry.parse_mapping_json(json.dumps([PING_MAPPING])))
+        self.assertEqual((), telemetry.parse_mapping_json(json.dumps([PING_MAPPING])))
         self.assertIsNone(telemetry.parse_mapping_json(json.dumps([PING_MAPPING, {**PING_MAPPING, "entity_id": "binary_sensor.other"}])))
         self.assertIsNone(telemetry.safe_center_url("https://@center/api/v1/telemetry"))
         self.assertIsNone(telemetry.safe_center_url("https://center/api/v1/telemetry?x=1"))
@@ -139,7 +139,7 @@ class HATelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, item.dropped_events)
         await asyncio.wait_for(item.stop(), 0.2)
 
-    async def test_ping_channel_cpu_boot_uptime_and_ring_hard_cap(self) -> None:
+    async def test_ping_stays_local_while_other_metrics_and_ring_hard_cap_work(self) -> None:
         mapping = telemetry.parse_mapping([
             PING_MAPPING,
             {"entity_id": "sensor.cpu", "kind": "ha.system", "metric": "processor_use_percent", "unit": "%", "channel_id": None},
@@ -156,7 +156,9 @@ class HATelemetryTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         payload = client.payloads[0]
         validate_batch(payload)
-        self.assertEqual(7, payload["events"][0]["channel_id"])
+        self.assertNotIn("ha.ping", {event["kind"] for event in payload["events"]})
+        self.assertEqual("ha.system", payload["events"][0]["kind"])
+        self.assertIsNone(payload["events"][0]["channel_id"])
         self.assertNotIn("binary_sensor.private_ping", json.dumps(payload))
         item._ring.extend(
             telemetry._RingEvent(index, {})
@@ -164,6 +166,15 @@ class HATelemetryTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(telemetry.RING_MAX_EVENTS, len(item._ring))
         await item.stop()
+
+    def test_ping_only_legacy_mapping_does_not_build_center_producer(self) -> None:
+        config = {
+            "telemetry_site_id": "chengde",
+            "telemetry_display_name": "Site",
+            "telemetry_center_url": "https://center.tailnet.example/api/v1/telemetry",
+            "telemetry_mapping": json.dumps([PING_MAPPING]),
+        }
+        self.assertIsNone(telemetry.build_producer(config, FakeCenter()))
 
     async def test_lifecycle_only_stops_after_successful_platform_unload(self) -> None:
         producer = FakeProducer()

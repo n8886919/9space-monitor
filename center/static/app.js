@@ -29,33 +29,6 @@ function table(headers, rows) {
   result.append(body); return result;
 }
 
-function sample(window, metric, unit) {
-  const data = window && window[metric];
-  if (!data || data.mean === null || data.count === 0) return "—（無樣本）";
-  const mean = Number.isInteger(data.mean) ? data.mean : Number(data.mean).toFixed(1);
-  return `${mean}${unit}（n=${data.count}）`;
-}
-
-function pingState(current) {
-  if (value(current, "available") !== true) return "—";
-  const currentState = value(current, "state");
-  if (["on", "true", "connected", "ok"].includes(currentState)) return "reachable";
-  if (["off", "false", "disconnected", "problem"].includes(currentState)) return "unreachable";
-  return "—";
-}
-
-function pingTable(channels) {
-  const rows = channels.map(channel => [
-    channelLabel(channel, channel.channel_id),
-    pingState(channel.current),
-    sample(channel.windows && channel.windows["1h"], "rtt_ms", " ms"),
-    sample(channel.windows && channel.windows["1h"], "packet_loss_percent", "%"),
-    sample(channel.windows && channel.windows["24h"], "rtt_ms", " ms"),
-    sample(channel.windows && channel.windows["24h"], "packet_loss_percent", "%"),
-  ]);
-  return table(["Camera", "Ping (ICMP)", "延遲/時", "丟包率/時", "延遲/日", "丟包率/日"], rows);
-}
-
 function cameraCard(siteId, camera) {
   const cameraId = camera.camera_id;
   const card = el("article"); card.className = `camera ${camera.latest_attempt ? `attempt-${camera.latest_attempt.status}` : ""}`;
@@ -131,24 +104,13 @@ function siteSummary(site) {
   return table(["Add-on / producer / capacity", "摘要"], rows);
 }
 
-async function renderSite(site) {
+function renderSite(site) {
   const root = document.getElementById("site-content"); root.replaceChildren(el("h2", site.display_name));
   root.append(el("h3", "Add-on / producer / capacity"), siteSummary(site));
   root.append(el("h3", "NVR live / recording"), nvrTable(site));
   root.append(el("h3", "Snapshot last good（單張）"));
   const cards = el("div"); cards.className = "cards";
   (site.cameras || []).forEach(camera => cards.append(cameraCard(site.site_id, camera))); root.append(cards);
-  root.append(el("h3", "Ping"));
-  try {
-    const response = await fetch(`api/v1/sites/${encodeURIComponent(site.site_id)}/ping-summary`, { cache: "no-store" });
-    if (!response.ok) throw new Error("ping_summary_unavailable");
-    const summary = await response.json();
-    if (selectedSiteId !== site.site_id) return;
-    root.append(pingTable(summary.channels || []));
-  } catch (_error) {
-    if (selectedSiteId !== site.site_id) return;
-    root.append(el("p", "Ping summary 無法讀取；不以 0 補值"));
-  }
 }
 
 function renderGlobalSummary(summary) {
@@ -171,7 +133,7 @@ function renderSummary(summary) {
     button.classList.toggle("active", site.site_id === selectedSiteId);
     button.addEventListener("click", () => { selectedSiteId = site.site_id; renderSummary(summary); }); tabs.append(button);
   });
-  void renderSite(selected);
+  renderSite(selected);
 }
 
 async function refresh() {

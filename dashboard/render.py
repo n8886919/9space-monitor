@@ -20,6 +20,12 @@ _AUTH = re.compile(r"(?:basic\s+|digest\s+)", re.I)
 _BASE64 = re.compile(r"^[A-Za-z0-9+/]{80,}={0,2}$")
 _NVR_LABELS = {"live_video": "Live video", "recording_recent": "Recording", "last_recording": "Last recording"}
 _METRIC_LABELS = {"available": "Reachable", "rtt_ms": "RTT", "packet_loss_percent": "Loss", "processor_use_percent": "CPU", "memory_used_percent": "Memory", "memory_free_mb": "Memory free", "storage_free_gb": "Storage free", "storage_used_percent": "Storage", "load_1m": "Load 1m", "load_5m": "Load 5m", "load_15m": "Load 15m", "temperature_c": "Temperature", "last_boot": "Last boot", "uptime_seconds": "Uptime", "rpi_throttled": "RPi throttled", "voltage_v": "Voltage", "download_mbps": "Download", "upload_mbps": "Upload", "state": "Status"}
+_LOCAL_PING_SCHEMA = {
+    "available": None,
+    "state": None,
+    "rtt_ms": "ms",
+    "packet_loss_percent": "%",
+}
 
 
 def _invalid() -> ValueError:
@@ -91,11 +97,13 @@ def validate_mapping(raw: object) -> dict[str, Any]:
                 raise _invalid()
             if item.get("kind") != "ha.ping" or item.get("channel_id") != channel_id:
                 raise _invalid()
+            metric = item.get("metric")
+            if metric not in _LOCAL_PING_SCHEMA or _LOCAL_PING_SCHEMA[metric] != item.get("unit"):
+                raise _invalid()
             entity_id = _entity(item["entity_id"])
             if entity_id in seen_entity:
                 raise _invalid()
             seen_entity.add(entity_id)
-            telemetry.append(dict(item))
         normalized_channels.append({"channel_id": channel_id, "label": _label(channel["label"]), "nvr_entities": nvr, "ping": [dict(item) for item in ping]})
     normalized_diagnostics: list[dict[str, Any]] = []
     for item in diagnostics:
@@ -109,7 +117,7 @@ def validate_mapping(raw: object) -> dict[str, Any]:
         seen_entity.add(entity_id)
         telemetry.append(dict(item))
         normalized_diagnostics.append(dict(item))
-    if not _m5c_parse(telemetry):
+    if telemetry and not _m5c_parse(telemetry):
         raise _invalid()
     telemetry.sort(key=lambda item: (item["kind"], item["metric"], item["channel_id"] or 0))
     normalized_diagnostics.sort(key=lambda item: (item["kind"], item["metric"], item["channel_id"] or 0))
@@ -120,29 +128,80 @@ def telemetry_json(raw: object) -> str:
     return json.dumps(validate_mapping(raw)["telemetry"], ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
-def lovelace_yaml(raw: object) -> str:
-    mapping = validate_mapping(raw)
+def _lovelace_view_lines(mapping: dict[str, Any]) -> list[str]:
     quote = lambda value: json.dumps(value, ensure_ascii=False)
-    lines = ["title: " + quote(mapping["display_name"]), "views:", "  - title: " + quote(mapping["display_name"]), "    path: " + quote(mapping["site_id"]), "    cards:"]
+    lines = [
+        "title: " + quote(mapping["display_name"]),
+        "path: " + quote(mapping["site_id"]),
+        "cards:",
+    ]
     nvr_rows = [(f'{channel["label"]} - {_NVR_LABELS[key]}', channel["nvr_entities"][key]) for channel in mapping["channels"] for key in ("live_video", "recording_recent", "last_recording")]
     ping_rows = [(f'{channel["label"]} - {_METRIC_LABELS[item["metric"]]}', item["entity_id"]) for channel in mapping["channels"] for item in sorted(channel["ping"], key=lambda item: (item["kind"], item["metric"], item["channel_id"]))]
     diagnostic_rows = [(_METRIC_LABELS[item["metric"]], item["entity_id"]) for item in mapping["diagnostics"]]
     groups = [("NVR / Recording", nvr_rows), ("Ping / Network", ping_rows), ("Diagnostics", diagnostic_rows)]
     for title, entities in groups:
-        lines += ["      - type: entities", "        title: " + quote(title), "        entities:"]
+        lines += ["  - type: entities", "    title: " + quote(title), "    entities:"]
         for label, entity_id in entities:
-            lines += ["          - entity: " + quote(entity_id), "            name: " + quote(label or entity_id)]
+            lines += ["      - entity: " + quote(entity_id), "        name: " + quote(label or entity_id)]
+    statistic_labels = {
+        ("rtt_ms", 1): "延遲/時",
+        ("packet_loss_percent", 1): "丟包率/時",
+        ("rtt_ms", 24): "延遲/日",
+        ("packet_loss_percent", 24): "丟包率/日",
+    }
+    for channel in mapping["channels"]:
+        by_metric = {item["metric"]: item for item in channel["ping"]}
+        for metric, hours in (("rtt_ms", 1), ("packet_loss_percent", 1), ("rtt_ms", 24), ("packet_loss_percent", 24)):
+            item = by_metric.get(metric)
+            if item is None:
+                continue
+            lines += [
+                "  - type: statistic",
+                "    entity: " + quote(item["entity_id"]),
+                "    name: " + quote(f'{channel["label"]} - {statistic_labels[(metric, hours)]}'),
+                "    stat_type: mean",
+                "    period:",
+                "      rolling_window:",
+                "        duration:",
+                f"          hours: {hours}",
+            ]
+    return lines
+
+
+def lovelace_view_yaml(raw: object) -> str:
+    return "\n".join(_lovelace_view_lines(validate_mapping(raw))) + "\n"
+
+
+def lovelace_yaml(raw: object) -> str:
+    mapping = validate_mapping(raw)
+    quote = lambda value: json.dumps(value, ensure_ascii=False)
+    view_lines = _lovelace_view_lines(mapping)
+    lines = [
+        "title: " + quote(mapping["display_name"]),
+        "views:",
+        "  - " + view_lines[0],
+        *("    " + line for line in view_lines[1:]),
+    ]
     return "\n".join(lines) + "\n"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render a private 9Space site mapping")
     parser.add_argument("mapping", type=Path)
-    parser.add_argument("--format", choices=("lovelace", "telemetry"), default="lovelace")
+    parser.add_argument(
+        "--format",
+        choices=("lovelace", "lovelace-view", "telemetry"),
+        default="lovelace",
+    )
     args = parser.parse_args()
     try:
         raw = json.loads(args.mapping.read_text(encoding="utf-8"))
-        sys.stdout.write(telemetry_json(raw) if args.format == "telemetry" else lovelace_yaml(raw))
+        renderer = {
+            "lovelace": lovelace_yaml,
+            "lovelace-view": lovelace_view_yaml,
+            "telemetry": telemetry_json,
+        }[args.format]
+        sys.stdout.write(renderer(raw))
     except (OSError, ValueError, json.JSONDecodeError):
         print("invalid mapping", file=sys.stderr)
         return 2

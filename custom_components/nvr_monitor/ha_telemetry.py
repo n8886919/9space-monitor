@@ -31,12 +31,17 @@ _IPV4_RE = re.compile(r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])")
 _IPV6_RE = re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![0-9A-Fa-f:])")
 _BASE64_RE = re.compile(r"^[A-Za-z0-9+/]{80,}={0,2}$")
 
-# (kind, metric): required unit, or None for boolean/state values.
-_MAPPING_SCHEMA: dict[tuple[str, str], str | None] = {
+# Legacy local Ping entries remain parseable during an upgrade, but are
+# intentionally filtered before a Center producer is built.
+_LOCAL_ONLY_MAPPING_SCHEMA: dict[tuple[str, str], str | None] = {
     ("ha.ping", "available"): None,
     ("ha.ping", "state"): None,
     ("ha.ping", "rtt_ms"): "ms",
     ("ha.ping", "packet_loss_percent"): "%",
+}
+
+# (kind, metric): required unit, or None for boolean/state values.
+_CENTER_MAPPING_SCHEMA: dict[tuple[str, str], str | None] = {
     ("ha.system", "storage_free_gb"): "GB",
     ("ha.system", "storage_used_percent"): "%",
     ("ha.system", "memory_free_mb"): "MB",
@@ -61,8 +66,8 @@ _NUMBER_RANGES = {
     "download_mbps": (0.0, 1_000_000.0), "load_15m": (0.0, 100_000.0),
     "load_1m": (0.0, 100_000.0), "load_5m": (0.0, 100_000.0),
     "memory_free_mb": (0.0, 1_000_000_000.0), "memory_used_percent": (0.0, 100.0),
-    "packet_loss_percent": (0.0, 100.0), "processor_use_percent": (0.0, 100.0),
-    "rtt_ms": (0.0, 3_600_000.0), "storage_free_gb": (0.0, 1_000_000_000.0),
+    "processor_use_percent": (0.0, 100.0),
+    "storage_free_gb": (0.0, 1_000_000_000.0),
     "storage_used_percent": (0.0, 100.0), "temperature_c": (-100.0, 300.0),
     "upload_mbps": (0.0, 1_000_000.0), "uptime_seconds": (0.0, 1_000_000_000.0),
     "voltage_v": (0.0, 1000.0),
@@ -146,7 +151,12 @@ def parse_mapping(value: object) -> tuple[MappingItem, ...] | None:
         entity_id, kind, metric, unit, channel_id = (raw.get(key) for key in ("entity_id", "kind", "metric", "unit", "channel_id"))
         if not isinstance(entity_id, str) or not _ENTITY_ID_RE.fullmatch(entity_id) or _FORBIDDEN_RE.search(entity_id):
             return None
-        required_unit = _MAPPING_SCHEMA.get((kind, metric), _MISSING) if isinstance(kind, str) and isinstance(metric, str) else _MISSING
+        schema = (
+            _LOCAL_ONLY_MAPPING_SCHEMA
+            if kind == "ha.ping"
+            else _CENTER_MAPPING_SCHEMA
+        )
+        required_unit = schema.get((kind, metric), _MISSING) if isinstance(kind, str) and isinstance(metric, str) else _MISSING
         if required_unit is _MISSING or unit != required_unit:
             return None
         if kind == "ha.ping":
@@ -158,6 +168,8 @@ def parse_mapping(value: object) -> tuple[MappingItem, ...] | None:
         if key in seen:
             return None
         seen.add(key)
+        if kind == "ha.ping":
+            continue
         items.append(MappingItem(entity_id, kind, metric, unit, channel_id))
     return tuple(items)
 
@@ -310,6 +322,6 @@ def build_producer(config: Mapping[str, object], client: CenterClient) -> HATele
     metadata = safe_site_metadata(config.get("telemetry_site_id"), config.get("telemetry_display_name"))
     url = safe_center_url(config.get("telemetry_center_url"))
     mapping = parse_mapping_json(config.get("telemetry_mapping"))
-    if metadata is None or url is None or mapping is None:
+    if metadata is None or url is None or not mapping:
         return None
     return HATelemetryProducer(center_url=url, site_id=metadata[0], display_name=metadata[1], mapping=mapping, client=client)

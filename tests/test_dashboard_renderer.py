@@ -5,7 +5,12 @@ from copy import deepcopy
 from pathlib import Path
 import unittest
 
-from dashboard.render import lovelace_yaml, telemetry_json, validate_mapping
+from dashboard.render import (
+    lovelace_view_yaml,
+    lovelace_yaml,
+    telemetry_json,
+    validate_mapping,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -17,7 +22,7 @@ def sample() -> dict:
 
 
 class DashboardRendererTests(unittest.TestCase):
-    def test_non_fourteen_channels_three_cards_and_m5c_contract(self) -> None:
+    def test_non_fourteen_channels_local_ping_statistics_and_center_contract(self) -> None:
         mapping = sample()
         self.assertEqual([3, 8, 21], [item["channel_id"] for item in mapping["channels"]])
         yaml = lovelace_yaml(mapping)
@@ -27,11 +32,24 @@ class DashboardRendererTests(unittest.TestCase):
         self.assertIn("Diagnostics", yaml)
         self.assertIn("Sample East - Live video", yaml)
         self.assertIn("Sample East - Reachable", yaml)
+        self.assertIn("type: statistic", yaml)
+        self.assertIn("Sample East - 延遲/時", yaml)
+        self.assertIn("Sample East - 丟包率/日", yaml)
+        self.assertIn("rolling_window", yaml)
+        self.assertIn("hours: 1", yaml)
+        self.assertIn("hours: 24", yaml)
+        self.assertIn("stat_type: mean", yaml)
         self.assertIn("name: \"CPU\"", yaml)
         self.assertNotIn("name: \"sensor.sample_cpu\"", yaml)
         telemetry = json.loads(telemetry_json(mapping))
         self.assertEqual(telemetry, validate_mapping(mapping)["telemetry"])
-        self.assertEqual({3, 8, 21}, {item["channel_id"] for item in telemetry if item["kind"] == "ha.ping"})
+        self.assertNotIn("ha.ping", {item["kind"] for item in telemetry})
+        self.assertTrue(all(item["channel_id"] is None for item in telemetry))
+
+        view_yaml = lovelace_view_yaml(mapping)
+        self.assertTrue(view_yaml.startswith('title: "承德"\npath: "chengde"\ncards:\n'))
+        self.assertNotIn("\nviews:", view_yaml)
+        self.assertIn("type: statistic", view_yaml)
 
     def test_rejects_duplicate_unsafe_and_snapshot_input_without_echo(self) -> None:
         cases = []

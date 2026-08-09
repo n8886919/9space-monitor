@@ -140,7 +140,7 @@ class CenterValidationTests(unittest.TestCase):
             validate_batch(payload)
 
     def test_kind_is_a_fixed_allowlist(self) -> None:
-        for kind in ("password", "nvr.custom", "ha.entity", "rtsp://bad"):
+        for kind in ("ha.ping", "password", "nvr.custom", "ha.entity", "rtsp://bad"):
             with self.subTest(kind=kind):
                 payload = valid_payload()
                 payload["events"][0]["kind"] = kind

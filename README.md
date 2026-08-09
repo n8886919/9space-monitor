@@ -32,10 +32,10 @@ Add-on 是唯一直接存取 Dahua NVR 的元件。Integration 不保存 NVR cre
 
 ## Components
 
-- `9space_snapshot_api/`：Home Assistant local add-on、NVR adapters、snapshot 與 telemetry producer。
+- `9space_snapshot_api/`：由 Home Assistant Supervisor managed repository 安裝／更新的 add-on、NVR adapters、snapshot 與 telemetry producer；不使用 HA local `/addons` source install。
 - `custom_components/nvr_monitor/`：Home Assistant custom integration 與 allowlisted HA telemetry producer。
 - `center/`：Center API、SQLite storage、snapshot scheduler/store 與 Web UI。
-- `dashboard/`：以每站 private mapping 產生 Lovelace／telemetry YAML 的 renderer；sample 只含合成資料。
+- `dashboard/`：以每站 private mapping 產生 local Lovelace 與非 Ping HA telemetry mapping；Ping (ICMP) 與其 statistics 留在 Home Assistant local，sample 只含合成資料。
 - `tests/`、`9space_snapshot_api/test/`：API、safety、storage、lifecycle 與 compatibility tests。
 
 ## Development start
@@ -54,6 +54,7 @@ Center 的 Docker 啟動與設定方式見 `center/README.md`。Dashboard render
 
 ```bash
 python3 -m dashboard.render dashboard/chengde.sample.json --format lovelace
+python3 -m dashboard.render dashboard/chengde.sample.json --format lovelace-view
 python3 -m dashboard.render dashboard/chengde.sample.json --format telemetry
 ```
 

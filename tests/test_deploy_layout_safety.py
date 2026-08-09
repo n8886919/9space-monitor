@@ -254,8 +254,18 @@ class DeployLayoutSafetyTests(unittest.TestCase):
         self.assertNotIn("共用備份（所有路徑都必須先執行）", DEPLOY)
         self.assertNotIn("若 config-entry backup 任一步驟失敗", DEPLOY)
 
+    def test_addon_uses_supervisor_managed_repository_only(self) -> None:
+        self.assertIn("Supervisor managed repository", DEPLOY)
+        self.assertIn("ha apps update --backup '$ADDON_SLUG'", DEPLOY)
+        self.assertIn("Settings > Apps > App store", DEPLOY)
+        self.assertIn("不得 fallback 到 HA local add-on source", DEPLOY)
+        self.assertNotIn("ADDON_REMOTE_DIR", DEPLOY)
+        self.assertNotIn("9space_snapshot_api.tgz", DEPLOY)
+        self.assertNotIn("## Add-on source deployment", DEPLOY)
+        self.assertNotIn("ha apps rebuild '$ADDON_SLUG'", DEPLOY)
+
     def test_rollbacks_are_scoped_to_the_mutated_component(self) -> None:
-        self.assertIn("ADDON_REMOTE_DIR.old", DEPLOY)
+        self.assertIn("forward rollback", DEPLOY)
         self.assertIn('ROLLBACK_SOURCE="$REPLACED"', DEPLOY)
         self.assertNotIn("integration_predeploy", DEPLOY)
         self.assertNotIn('"$BACKUP/addon"', DEPLOY)
