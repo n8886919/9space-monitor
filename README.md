@@ -1,6 +1,6 @@
 # 9Space Monitor
 
-`9space-monitor` 是單人維護的 Home Assistant／Dahua NVR 監控 repository。它把站點內的 NVR 狀態與 Home Assistant 診斷資料送到 multi-site Center，同時保留既有 snapshot API 相容性。
+`9space-monitor` 是單人維護的 Home Assistant／Dahua NVR 監控 repository。它把站點內的 NVR 狀態與截圖送到中央 9Space Monitor Hub，同時保留既有 snapshot API 相容性。
 
 ## Architecture
 
@@ -17,13 +17,16 @@ Home Assistant
     ├── legacy 與 local HTTP API
     └── push NVR telemetry
             │
-            └── Tailscale ──> Center
+            └── Tailscale ──> 9Space Monitor Hub add-on
 
-Center
-├── FastAPI／Docker service（container port 8765）
-├── SQLite telemetry store（七日 retention 與 bounded capacity guards）
-├── dashboard 與 sanitized export
-└── bounded last-good snapshot store（每 site/channel 最多一張）
+中央 Home Assistant
+├── 9Space Monitor Hub add-on
+│   ├── current telemetry 只留 RAM
+│   ├── debug Web UI
+│   └── bounded last-good snapshot store（每 site/channel 最多一張）
+└── nine_space_monitor_hub component
+    ├── camera／binary_sensor／sensor entities
+    └── 狀態歷史交由 Home Assistant Recorder 保存
 ```
 
 Add-on 是唯一直接存取 Dahua NVR 的元件。Integration 不保存 NVR credentials、不建立 RTSP URL、不呼叫 CGI／snapshot endpoint，也不建立 Snapshot camera entity。Camera Ping 使用 Home Assistant 原生 integration。
@@ -34,7 +37,8 @@ Add-on 是唯一直接存取 Dahua NVR 的元件。Integration 不保存 NVR cre
 
 - `9space_snapshot_api/`：由 Home Assistant Supervisor managed repository 安裝／更新的 add-on、NVR adapters、snapshot 與 telemetry producer；不使用 HA local `/addons` source install。
 - `custom_components/nvr_monitor/`：Home Assistant custom integration 與 allowlisted HA telemetry producer。
-- `center/`：Center API、SQLite storage、snapshot scheduler/store 與 Web UI。
+- `nine_space_monitor_hub/`：Supervisor add-on、RAM current-state、snapshot scheduler/store 與 debug Web UI。
+- `custom_components/nine_space_monitor_hub/`：中央 Home Assistant component，將 Hub 當下狀態映射成 Recorder-managed entities。
 - `dashboard/`：以每站 private mapping 產生 local Lovelace 與非 Ping HA telemetry mapping；Ping (ICMP) 與其 statistics 留在 Home Assistant local，sample 只含合成資料。
 - `tests/`、`9space_snapshot_api/test/`：API、safety、storage、lifecycle 與 compatibility tests。
 
@@ -46,11 +50,11 @@ Add-on 是唯一直接存取 Dahua NVR 的元件。Integration 不保存 NVR cre
 git status --short
 python3 -m unittest tests.test_repository
 python3 -m unittest discover -s 9space_snapshot_api/test -v
-python3 -m compileall -q custom_components/nvr_monitor center dashboard
+python3 -m compileall -q custom_components/nvr_monitor custom_components/nine_space_monitor_hub nine_space_monitor_hub dashboard
 git diff --check
 ```
 
-Center 的 Docker 啟動與設定方式見 `center/README.md`。Dashboard renderer 範例：
+Hub add-on 設定見 `nine_space_monitor_hub/README.md`。Dashboard renderer 範例：
 
 ```bash
 python3 -m dashboard.render dashboard/chengde.sample.json --format lovelace
@@ -64,9 +68,9 @@ python3 -m dashboard.render dashboard/chengde.sample.json --format telemetry
 
 - `AGENTS.md`：agent 入口、永久架構／安全規則與風險分級。
 - `STATUS.md`：短期 current／deployed／next／blockers／last-known 狀態。
-- `API.md`：legacy、local、Center telemetry 與 snapshot API contract。
+- `API.md`：legacy、local、Hub telemetry 與 snapshot API contract。
 - `DEPLOY.md`：單站手動 SSH 部署、checks、smoke test 與 rollback reference。
 - `.agents/skills/9space-diagnostic/SKILL.md`：Home Assistant／NVR 唯讀診斷。
-- `center/README.md`：Center runtime configuration 與容器操作。
+- `nine_space_monitor_hub/README.md`：Hub add-on options、資料責任與 API。
 
 普通工作不必預讀所有文件；由 `AGENTS.md` 依任務 lazy-load 專門文件。歷史由 Git 保存，不以 session handoff 或 milestone diary 作為 source of truth。

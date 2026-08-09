@@ -21,7 +21,7 @@
 - 不得對 `8122` 執行 test、restart、rebuild、reload、modify，亦不得把 `8122` 當成 integration URL。
 - 本 repository 的 monorepo add-on 版本為 `0.3.8`，host port 是 `8222`，container port 是 `8000`。
 - Snapshot add-on 只能由 HA 已設定的 Supervisor managed repository 安裝與更新；不得以 tar／scp 寫入 local `/addons`，也不得把 local source 當更新失敗時的替代路徑。
-- Center 是獨立 container service，依 `center/README.md` 從 Git checkout 部署；它不是 HA add-on，不得安裝到 HA local `/addons`。
+- 舊 Center 已由 `nine_space_monitor_hub/` Supervisor add-on 取代；Hub 不使用 SQLite 保存狀態歷史，歷史由中央 HA Recorder 保存。
 - Supervisor add-on identifier／slug 與 internal hostname 不可混用。
 - 唯讀 version gate 只有在 Supervisor 已安裝 add-on 是 `0.3.8` 時才通過；不得因舊版 endpoint 可用就跳過必要的 repository update。
 - 若任務已要求部署，add-on 的 managed update 或 integration 的 scoped upload、restart 與 verify 可依本文件連續完成；操作 `8122`、`.storage`、destructive rollback、schema／auth 或 public exposure 仍須另行明確確認。
@@ -102,9 +102,32 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 - 只有實際要執行 UI Reconfigure 時，才備份一次 `core.config_entries`。
 - `.storage` migration、destructive cleanup、schema／auth 變更不屬 routine deployment；另做精確 plan 與 task-specific backup。
 
+## 9Space Monitor Hub 安裝
+
+Hub add-on 由同一 Supervisor managed repository 的 `nine_space_monitor_hub/`
+提供。先 push default branch，再由使用者在 App store 刷新既有 repository 並安裝
+`9space_monitor_hub`；不得用 SSH 複製到 local `/addons`。
+
+Hub options 必須在 Supervisor UI 明列每站 `site_id`、display name、private add-on
+base URL、channels 與 bounded scheduler 參數。真實 URL 不提交 Git。安裝後以
+`ha apps info <actual_slug>` 確認實際 slug 與 internal hostname，再把
+`custom_components/nine_space_monitor_hub/` 以 scoped transaction 安裝到中央 HA。
+
+Component 換入後先執行：
+
+```bash
+python3 -m compileall -q /config/custom_components/nine_space_monitor_hub
+ha core check
+```
+
+只有 `ha core check` PASS 才 restart。Component config entry 必須由使用者在 HA UI
+新增並填入 `http://<actual-hub-hostname>:8765`；不得直接編輯 `.storage`。Hub add-on
+保留每鏡頭一張 last-good JPEG；current telemetry／snapshot attempt 只在 RAM，HA
+Recorder 是狀態歷史唯一持有者。
+
 ## 唯讀 preflight／smoke／observation（預設）
 
-Snapshot API smoke test 是 add-on API 與未來 Center/server 的 contract 驗證；integration 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
+Snapshot API smoke test 是 local add-on 與 Hub 的 contract 驗證；`nvr_monitor` 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
 
 只有 Supervisor 已安裝版本明確為 `0.3.8`，且以下唯讀檢查都正常時，才可跳過 add-on repository update：
 
@@ -348,7 +371,7 @@ filter_logs_after_marker() {
 Snapshot add-on `0.3.8` 需要 integration `0.2.6` 或更新版本，才能由
 `live_checked_at` 維護 integration-owned 24 小時 RAM ring。Integration `0.2.7`
 在啟動時透過 Recorder 的 read-only executor API 重建最近 24 小時 window；不建立
-第二份磁碟 history，add-on 與 Center 仍不接收在線率或斷線次數。
+第二份磁碟 history，add-on 與 Hub 仍不接收在線率或斷線次數。
 
 ```bash
 tar -C custom_components -czf /tmp/nvr_monitor.tgz nvr_monitor
@@ -474,7 +497,7 @@ Agent 不得自行替使用者選擇會改變 config-entry／entity identity 的
 [ ] integration base URL = http://${ADDON_HOSTNAME}:8000
 [ ] Reconfigure 後既有 entry、subentries 與非 Snapshot entity identities 保留
 [ ] 使用者已在 HA UI 移除 orphan `camera.*_snapshot` entities；未修改 `.storage`，未產生 `_2`
-[ ] add-on Snapshot endpoint Content-Type 為 image/jpeg（未來 Center/server contract）
+[ ] add-on Snapshot endpoint Content-Type 為 image/jpeg（Hub contract）
 [ ] integration 不再要求 NVR password
 [ ] NVR channel live-video entities 正常
 [ ] recording entities 正常

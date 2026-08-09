@@ -7,7 +7,7 @@ from copy import deepcopy
 import hashlib
 import unittest
 
-from center.validation import MAX_BATCH_EVENTS, TelemetryValidationError, validate_batch
+from nine_space_monitor_hub.validation import MAX_BATCH_EVENTS, TelemetryValidationError, validate_batch
 
 
 def valid_payload() -> dict:

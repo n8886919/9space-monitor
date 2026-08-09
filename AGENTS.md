@@ -15,13 +15,13 @@
 ## 架構與相容性不變量
 
 - Add-on 是唯一可直接連接 Dahua NVR、保存 NVR host／ports／username／password、建立 RTSP URL、呼叫 Dahua CGI、執行 ffmpeg snapshot 的元件。
-- Integration 只透過 local add-on API 取得 NVR／錄影狀態；不得取得 snapshot、建立 Snapshot camera entity 或重做 Home Assistant Ping integration。
+- Local `nvr_monitor` integration 只透過 local add-on API 取得 NVR／錄影狀態；不得取得 snapshot、建立 Snapshot camera entity 或重做 Home Assistant Ping integration。中央 `nine_space_monitor_hub` component 只可經 Hub API 建立跨站 snapshot camera 與 current-state entities。
 - `GET /api/camera/{camera_id}` 的 path、status codes、multipart boundary、JSON／JPEG 結構與欄位保持相容，除非使用者明確批准 breaking change。
 - Home Assistant entity identity 必須保留；不得用 `_2` replacement 規避衝突，不得自行重寫 unique IDs。
 - Add-on／integration producer 只使用 24 小時 RAM ring 與 bounded memory queue，不把 telemetry history 寫入磁碟。
-- Center telemetry SQLite 不得保存 JPEG。Center snapshot store 只能 bounded、atomic replace 地保存每個 site/channel 唯一一張最後成功 JPEG，且不得建立 history 或把 JPEG 寫入 export、log、fixture、Git。
-- Center 只能經站點 add-on snapshot API 取圖，不能直接連 NVR。每站 channel count 與 entity IDs 由 mapping 明定，不可假設固定數量或命名。
-- M5 Tailscale 內網不使用 per-site token；不得自行新增公開 auth flow 或公開暴露 Center。
+- Hub add-on 不保存 telemetry／snapshot attempt history 或使用 SQLite；current state 只留 RAM，歷史由中央 Home Assistant Recorder 保存。Hub snapshot store 只能 bounded、atomic replace 地保存每個 site/channel 唯一一張最後成功 JPEG，且不得建立 history 或把 JPEG 寫入 telemetry、log、fixture、Git。
+- Hub 只能經站點 add-on snapshot API 取圖，不能直接連 NVR。每站 channel count 由 options mapping 明定，不可假設固定數量或命名。
+- M5 Tailscale 內網不使用 per-site token；不得自行新增公開 auth flow 或公開暴露 Hub。
 
 ## 永久安全邊界
 

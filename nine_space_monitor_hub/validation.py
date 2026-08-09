@@ -1,4 +1,4 @@
-"""Strict validation for sanitized Center telemetry batches."""
+"""Strict validation for sanitized Hub telemetry batches."""
 
 from __future__ import annotations
 
@@ -259,7 +259,7 @@ def _looks_like_forbidden_string(value: str) -> bool:
 
 
 def validate_display_name(value: Any) -> str:
-    """Validate Center site display metadata for every persistence path."""
+    """Validate Hub site display metadata for every accepted path."""
     if (
         not isinstance(value, str)
         or not value.strip()

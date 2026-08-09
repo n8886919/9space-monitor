@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from center.validation import validate_batch
+from nine_space_monitor_hub.validation import validate_batch
 
 ADDON_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ADDON_DIR))

@@ -1,0 +1,34 @@
+{
+  "title": "9Space Monitor Hub",
+  "config": {
+    "abort": {"already_configured": "This Hub URL is already configured."},
+    "error": {
+      "cannot_connect": "Cannot connect to 9Space Monitor Hub.",
+      "invalid_response": "The Hub returned an invalid response.",
+      "unknown": "Unexpected error."
+    },
+    "step": {
+      "user": {
+        "title": "Connect to 9Space Monitor Hub",
+        "description": "Enter the internal URL shown for the installed Hub add-on.",
+        "data": {"hub_base_url": "Hub base URL"}
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "live_video": {"name": "Live video"},
+      "recording_query_ok": {"name": "Recording query"},
+      "recording_recent": {"name": "Recording within 24h"},
+      "snapshot_success": {"name": "Snapshot attempt"}
+    },
+    "sensor": {
+      "recording_files_24h": {"name": "Recording files 24h"},
+      "recording_coverage_24h": {"name": "Recording coverage 24h"},
+      "snapshot_latency": {"name": "Snapshot latency"},
+      "snapshot_age": {"name": "Snapshot age"},
+      "last_recording": {"name": "Last recording"},
+      "last_snapshot_attempt": {"name": "Last snapshot attempt"}
+    }
+  }
+}

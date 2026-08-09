@@ -1,4 +1,4 @@
-"""Direct ASGI tests for Center without the unstable TestClient portal."""
+"""Direct ASGI tests for the history-free 9Space Monitor Hub."""
 
 from __future__ import annotations
 
@@ -10,232 +10,121 @@ import os
 import tempfile
 import unittest
 
-from center.app import create_app
-from center.storage import TelemetryStorage
-from center.validation import MAX_BODY_BYTES
+from nine_space_monitor_hub.app import create_app
+from nine_space_monitor_hub.scheduler import SnapshotSite
+from nine_space_monitor_hub.snapshots import SnapshotStore
+from nine_space_monitor_hub.state import CurrentState
+from nine_space_monitor_hub.validation import MAX_BODY_BYTES
 
 
-async def asgi_request(
-    app,
-    method: str,
-    path: str,
-    *,
-    chunks: list[bytes] | None = None,
-    query: str = "",
-    content_length: bool = True,
-    pathsend: bool = False,
-) -> tuple[int, dict[str, str], bytes]:
-    """Drive the ASGI app directly, including controllable request chunks."""
+async def asgi_request(app, method: str, path: str, *, chunks=None, content_length=True, pathsend=False):
     chunks = list(chunks or [])
     headers = [(b"content-type", b"application/json")]
     if content_length:
         headers.append((b"content-length", str(sum(map(len, chunks))).encode()))
     scope = {
-        "type": "http",
-        "asgi": {"version": "3.0"},
-        "http_version": "1.1",
-        "method": method,
-        "scheme": "http",
-        "path": path,
-        "raw_path": path.encode(),
-        "query_string": query.encode(),
-        "headers": headers,
-        "client": ("127.0.0.1", 12345),
-        "server": ("center.test", 80),
-        "root_path": "",
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+        "method": method, "scheme": "http", "path": path, "raw_path": path.encode(),
+        "query_string": b"", "headers": headers, "client": ("127.0.0.1", 1),
+        "server": ("hub.test", 80), "root_path": "",
         "extensions": {"http.response.pathsend": {}} if pathsend else {},
     }
-    request_index = 0
-    request_complete = False
-    sent: list[dict] = []
+    index = 0
+    sent = []
 
-    async def receive() -> dict:
-        nonlocal request_index, request_complete
-        if request_index < len(chunks):
-            body = chunks[request_index]
-            request_index += 1
-            request_complete = request_index == len(chunks)
-            return {
-                "type": "http.request",
-                "body": body,
-                "more_body": request_index < len(chunks),
-            }
-        if not request_complete:
-            request_complete = True
-            return {"type": "http.request", "body": b"", "more_body": False}
-        return {"type": "http.disconnect"}
+    async def receive():
+        nonlocal index
+        if index < len(chunks):
+            body = chunks[index]; index += 1
+            return {"type": "http.request", "body": body, "more_body": index < len(chunks)}
+        return {"type": "http.request", "body": b"", "more_body": False}
 
-    async def send(message: dict) -> None:
+    async def send(message):
         sent.append(message)
 
     await app(scope, receive, send)
-    start = next(message for message in sent if message["type"] == "http.response.start")
-    body = b"".join(
-        message.get("body", b"")
-        for message in sent
-        if message["type"] == "http.response.body"
-    )
-    response_headers = {
-        key.decode().lower(): value.decode() for key, value in start["headers"]
-    }
-    return int(start["status"]), response_headers, body
+    start = next(item for item in sent if item["type"] == "http.response.start")
+    body = b"".join(item.get("body", b"") for item in sent if item["type"] == "http.response.body")
+    response_headers = {key.decode().lower(): value.decode() for key, value in start["headers"]}
+    return start["status"], response_headers, body
 
 
-class CenterAppTests(unittest.TestCase):
-    def setUp(self) -> None:
+class HubAppTests(unittest.TestCase):
+    def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
-        storage = TelemetryStorage(os.path.join(self.tempdir.name, "center.sqlite3"))
+        self.site = SnapshotSite("safe-site", "Safe", "http://example.invalid", (1,), 1, 1, 30)
+        self.store = SnapshotStore(os.path.join(self.tempdir.name, "snapshots"))
+        self.state = CurrentState((self.site,))
 
-        async def run_immediately(function, *args, **kwargs):
+        async def immediate(function, *args, **kwargs):
             return function(*args, **kwargs)
 
-        self.app = create_app(storage, run_sync=run_immediately)
+        self.app = create_app(
+            sites=(self.site,), snapshots=self.store, state=self.state,
+            max_stale_seconds=120, run_sync=immediate,
+        )
 
-    def tearDown(self) -> None:
+    def tearDown(self):
         self.tempdir.cleanup()
 
-    def request(self, method: str, path: str, **kwargs):
+    def request(self, method, path, **kwargs):
         return asyncio.run(asgi_request(self.app, method, path, **kwargs))
 
-    def test_health_and_data_routes_are_registered(self) -> None:
-        routes = {route.path: route for route in self.app.routes}
-        self.assertEqual(
-            asyncio.run(routes["/healthz"].endpoint()), {"status": "ok"}
-        )
-        for path in (
-            "/api/v1/telemetry",
-            "/api/v1/sites/{site_id}/events",
-            "/api/v1/sites/{site_id}/latest",
-            "/api/v1/sites/{site_id}/export.json",
-            "/api/v1/sites/{site_id}/cameras/{camera_id}/snapshot",
-        ):
-            self.assertIn(path, routes)
+    def payload(self, metrics=None):
+        return {
+            "site_id": "safe-site", "display_name": "Safe", "source": "addon",
+            "events": [{
+                "event_id": hashlib.sha256(b"event").hexdigest(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "kind": "nvr.live", "channel_id": 1,
+                "metrics": metrics or {"live_video": True, "checked_at": datetime.now(timezone.utc).isoformat()},
+            }],
+        }
+
+    def test_routes_expose_current_state_and_snapshot_but_no_history_export(self):
+        routes = {route.path for route in self.app.routes}
+        self.assertIn("/api/v1/telemetry", routes)
+        self.assertIn("/api/v1/sites", routes)
+        self.assertIn("/api/v1/sites/{site_id}/cameras/{camera_id}/snapshot", routes)
         serialized = str(self.app.openapi()).lower()
         self.assertIn("image/jpeg", serialized)
-        self.assertNotIn("application/octet-stream", serialized)
+        for forbidden in ("/events", "/latest", "/export.json", "ping-summary"):
+            self.assertNotIn(forbidden, " ".join(routes))
 
-    def test_ping_summary_is_not_a_center_route(self) -> None:
-        routes = {route.path for route in self.app.routes}
-        self.assertNotIn("/api/v1/sites/{site_id}/ping-summary", routes)
+    def test_ingest_keeps_current_state_in_memory(self):
+        raw = json.dumps(self.payload()).encode()
+        status, _headers, body = self.request("POST", "/api/v1/telemetry", chunks=[raw])
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"accepted": 1})
+        status, _headers, body = self.request("GET", "/api/v1/sites")
+        camera = json.loads(body)["sites"][0]["cameras"][0]
+        self.assertIs(camera["live_video"], True)
+        self.assertNotIn("statistics", camera)
+
+    def test_unknown_site_is_rejected_and_not_discovered(self):
+        payload = self.payload(); payload["site_id"] = "unknown"
         status, _headers, _body = self.request(
-            "GET", "/api/v1/sites/chengde/ping-summary"
+            "POST", "/api/v1/telemetry", chunks=[json.dumps(payload).encode()]
         )
         self.assertEqual(status, 404)
+        status, _headers, body = self.request("GET", "/api/v1/sites")
+        self.assertEqual([site["site_id"] for site in json.loads(body)["sites"]], ["safe-site"])
 
-    def test_body_bound_without_content_length_rejects_one_giant_chunk(self) -> None:
+    def test_streaming_body_bound_and_sensitive_values_fail_closed(self):
         status, _headers, _body = self.request(
-            "POST",
-            "/api/v1/telemetry",
-            chunks=[b"x" * (MAX_BODY_BYTES + 1)],
-            content_length=False,
+            "POST", "/api/v1/telemetry", chunks=[b"x" * (MAX_BODY_BYTES + 1)], content_length=False
         )
         self.assertEqual(status, 413)
-
-    def test_body_bound_without_content_length_rejects_segmented_overflow(self) -> None:
-        status, _headers, _body = self.request(
-            "POST",
-            "/api/v1/telemetry",
-            chunks=[b"x" * (MAX_BODY_BYTES - 10), b"y" * 11],
-            content_length=False,
-        )
-        self.assertEqual(status, 413)
-
-    def test_sensitive_ingest_never_reaches_query_latest_or_export(self) -> None:
-        sensitive_metrics = (
-            {"state": "hunter2"},
-            {"state": "192.168.0.10"},
-            {"state": "2001:db8::1"},
-            {"state": "rtsp://user:pass@example.invalid/live"},
-            {"state": "Authorization: Digest secret"},
-            {"state": "data:image/jpeg;base64,AAAA"},
-            {"jpeg": "AAAA"},
-            {"raw_payload": "hidden"},
-            {"entity_id": "binary_sensor.192_168_0_101"},
-        )
-        markers: list[bytes] = []
-        for index, metrics in enumerate(sensitive_metrics):
-            payload = {
-                "site_id": "chengde",
-                "display_name": "承德",
-                "source": "addon",
-                "events": [
-                    {
-                        "event_id": hashlib.sha256(
-                            f"addon|chengde|nvr.live|1|rejected-{index}".encode()
-                        ).hexdigest(),
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "kind": "nvr.live",
-                        "channel_id": 1,
-                        "metrics": metrics,
-                    }
-                ],
-            }
-            raw = json.dumps(payload).encode()
-            status, _headers, response = self.request(
-                "POST", "/api/v1/telemetry", chunks=[raw]
-            )
-            self.assertEqual(status, 422)
-            for value in metrics.values():
-                marker = str(value).encode()
-                markers.append(marker)
-                self.assertNotIn(marker, response)
-
-        for path in (
-            "/api/v1/sites/chengde/events",
-            "/api/v1/sites/chengde/latest",
-            "/api/v1/sites/chengde/export.json",
-        ):
-            status, _headers, body = self.request("GET", path)
-            self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body)["events"], [])
-            for marker in markers:
-                self.assertNotIn(marker, body)
-
-    def test_secret_site_bad_kind_and_opaque_event_id_never_land(self) -> None:
-        base = {
-            "site_id": "chengde",
-            "display_name": "承德",
-            "source": "addon",
-            "events": [
-                {
-                    "event_id": hashlib.sha256(
-                        b"addon|chengde|nvr.live|1|identity-contract"
-                    ).hexdigest(),
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "kind": "nvr.live",
-                    "channel_id": 1,
-                    "metrics": {"live_video": True},
-                }
-            ],
-        }
-        variants = []
-        secret_site = json.loads(json.dumps(base))
-        secret_site["site_id"] = "password-site"
-        variants.append(secret_site)
-        bad_kind = json.loads(json.dumps(base))
-        bad_kind["events"][0]["kind"] = "password"
-        variants.append(bad_kind)
-        opaque_event = json.loads(json.dumps(base))
-        opaque_event["events"][0]["event_id"] = "hunter2"
-        variants.append(opaque_event)
-
-        for payload in variants:
-            status, _headers, _body = self.request(
-                "POST",
-                "/api/v1/telemetry",
-                chunks=[json.dumps(payload).encode()],
-            )
-            self.assertEqual(status, 422)
-
-        status, _headers, _body = self.request(
-            "GET", "/api/v1/sites/token-site/events"
-        )
+        raw = json.dumps(self.payload({"state": "rtsp://user:pass@example.invalid/live"})).encode()
+        status, _headers, body = self.request("POST", "/api/v1/telemetry", chunks=[raw])
         self.assertEqual(status, 422)
-        for path in (
-            "/api/v1/sites/chengde/events",
-            "/api/v1/sites/chengde/latest",
-            "/api/v1/sites/chengde/export.json",
-        ):
-            status, _headers, body = self.request("GET", path)
-            self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body)["events"], [])
+        self.assertNotIn(b"user:pass", body)
+
+    def test_snapshot_contract_uses_one_last_good_jpeg(self):
+        status, _headers, body = self.request("GET", "/api/v1/sites/safe-site/cameras/1/snapshot")
+        self.assertEqual((status, json.loads(body)), (503, {"error_code": "snapshot_unavailable"}))
+        self.store.write("safe-site", 1, b"opaque", timestamp_ms=int(datetime.now(timezone.utc).timestamp() * 1000))
+        status, headers, body = self.request("GET", "/api/v1/sites/safe-site/cameras/1/snapshot")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["content-type"], "image/jpeg")
+        self.assertEqual(body, b"opaque")

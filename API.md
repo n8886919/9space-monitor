@@ -5,10 +5,10 @@
 此 API 是：
 
 - Home Assistant integration 與同站點 add-on 的狀態邊界。
-- M5 add-on／integration 透過 Tailscale push sanitized telemetry 到 Center 的相容基礎。
+- M5 add-on／integration 透過 Tailscale push sanitized telemetry 到 Hub 的相容基礎。
 - 目前正在使用的舊 snapshot client 的相容介面。
 
-M5 新增 Center telemetry ingest API；它與 legacy snapshot API、local integration API 分離，且不修改同事現有呼叫方式。
+Hub telemetry ingest API 與 legacy snapshot API、local integration API 分離，且不修改同事現有呼叫方式。
 
 ## 網路決策
 
@@ -22,10 +22,10 @@ M5 新增 Center telemetry ingest API；它與 legacy snapshot API、local integ
 安全債務：
 
 - 公網 port forwarding 不是最終架構。
-- M5 add-on 與 integration 透過 Tailscale push telemetry 到 Center。
-- 同事固定主機只呼叫 center。
+- M5 add-on 與 integration 透過 Tailscale push telemetry 到 Hub。
+- 中央 Home Assistant component 只呼叫 Hub。
 - 同事完成切換後，移除 local API 的不必要公網 port forwarding。
-- M5 為受控 Tailscale 內網，不新增 per-site token；Center 不得暴露至公網。
+- M5 為受控 Tailscale 內網，不新增 per-site token；Hub 不得暴露至公網。
 
 ## Legacy API
 
@@ -58,7 +58,7 @@ M5 新增 Center telemetry ingest API；它與 legacy snapshot API、local integ
 
 ## Minimal local API
 
-新 endpoint 只提供 integration 必需的資料；M5 Center telemetry 不從此 endpoint pull 資料。
+新 endpoint 只提供 integration 必需的資料；Hub telemetry 不從此 endpoint pull 資料。
 
 ### `GET /healthz`
 
@@ -127,7 +127,7 @@ HTTP status：`404`
 
 ### `GET /api/v1/channels/{channel_id}/snapshot`
 
-用途：供既有 client 取得最新 JPEG；Home Assistant integration 不呼叫此 endpoint，也不建立 Snapshot camera entity。M5F Center 只可由 scheduler 經此站點 add-on endpoint 取得 JPEG，並寫入自己的最後成功 snapshot store。
+用途：供既有 client 取得最新 JPEG；`nvr_monitor` 不呼叫此 endpoint，也不建立 Snapshot camera entity。Hub scheduler 只可經此站點 add-on endpoint 取圖，並寫入自己的最後成功 snapshot store。
 
 成功：
 
@@ -213,60 +213,78 @@ M5 可在 `/api/v1` 增加不破壞既有 consumer 的 optional 診斷欄位與 
 - Integration 不 fallback 回直接連接 NVR。
 
 Snapshot 保持由 add-on demand-driven capture 與 cache 提供。M5F 起 `max_concurrency`
-為 site 可設定、runtime bounded 的同時 snapshot 上限，可依網路與 Pi 硬體設定；不得無上限併發。Center 只經站點 add-on snapshot API 取得圖片，獨立 store 每 site/channel 僅保存最後成功 JPEG，atomic replace、無 history，且 JPEG 不得進 telemetry SQLite、export、log、fixture 或 Git。
+為 site 可設定、runtime bounded 的同時 snapshot 上限，可依網路與 Pi 硬體設定；不得無上限併發。Hub 只經站點 add-on snapshot API 取得圖片，獨立 store 每 site/channel 僅保存最後成功 JPEG，atomic replace、無 history，且 JPEG 不得進 telemetry、log、fixture 或 Git。
 
 ## 相容性政策
 
-- Legacy API 在同事完成 center migration 前保持不變。
+- Legacy API 在同事完成 Hub migration 前保持不變。
 - `/api/v1` 可以增加 optional 欄位。
 - 不刪除或重新命名既有 `/api/v1` 欄位，除非同步修改 integration 並記錄 breaking change。0.3.8 已同步把 live 24 小時 aggregates 移至 integration。
-- local `/api/v1` 不加入 Center-specific path、site registry 或 multi-site schema；M5 Center 使用獨立 telemetry ingest contract。
+- local `/api/v1` 不加入 Hub-specific path、site registry 或 multi-site schema；Hub 使用獨立 telemetry ingest contract。
 
-## M5 Center telemetry contract
+## Hub current telemetry contract
 
-Center 接收兩類 sanitized batch，皆不含 JPEG、credentials、Authorization、完整 RTSP/CGI URL、raw CGI body 或 snapshot body：
+Hub 接收既有兩類 sanitized batch，皆不含 JPEG、credentials、Authorization、完整
+RTSP/CGI URL、raw CGI body、snapshot body、Home Assistant entity ID 或 Ping：
 
-1. Add-on NVR telemetry：channel 當下 live/recording 狀態、recording query aggregates、probe/query/snapshot metadata、allowlisted Dahua diagnostics；不含 live 24 小時 history、在線率或斷線次數。
-2. Integration HA telemetry：allowlisted System Monitor、RPi Power、Fast.com entity states。
+1. Add-on NVR telemetry：channel 當下 live/recording 狀態、最新 recording query
+   aggregates、probe/query/snapshot metadata 與 allowlisted diagnostics。
+2. Integration HA telemetry：allowlisted System Monitor、RPi Power、Fast.com 當下狀態。
 
-System Monitor 的 M5 allowlist 包含 disk／memory／load／temperature，以及
-`processor_use_percent`、`last_boot`（含時區 ISO 8601）與 `uptime_seconds`（unit `s`）。
-HA Ping (ICMP) entities、RTT 與 packet loss 僅留在 Home Assistant local，不屬於
-Center telemetry contract。Local dashboard 可直接以原生 Ping entities 與 recorder
-statistics 顯示目前狀態、rolling 1h 與 rolling 24h mean；不得把 Ping events、entity
-IDs 或衍生 rollups 上送 Center。其餘 HA metrics 的 channel ID 為 `null`。
+Hub 驗證後只在 RAM 保存每個 `site/source/kind/channel` 最新一筆。它不使用 SQLite、
+不提供 events/export API、不計算 rolling history。Hub restart 後由 producer 重新填入。
+Hub component 將 channel 當下狀態映射為 Home Assistant entities，狀態歷史與
+statistics 由 Home Assistant Recorder 負責。
 
 Producer 規則：
 
-- 非阻塞、短 timeout；Center 失聯不得影響 NVR probe、integration coordinator 或 HA startup。
+- 非阻塞、短 timeout；Hub 失聯不得影響 NVR probe、integration coordinator 或 HA startup。
 - producer 不保存 telemetry history；只保有 bounded memory queue。
 - queue 滿或 server 不可達時允許丟棄資料，並以 sanitized counter metadata 回報。
-- Center 保存七日；單站採 logical 保守水位，並以 2 GiB 實體檔 fail-closed guard 保護主機容量。具體預設值待 Center 實作完成後以測試核對。
-- `site_id` 為穩定 ASCII identifier，display name 另存；承德原型為 `chengde`／「承德」。
+- `site_id` 為穩定 ASCII identifier，display name 另存。
+- HA Ping、RTT、packet loss、在線率與斷線次數繼續只留各站 local HA。
 
-## M5F Center snapshot contract（已實作）
+### `POST /api/v1/telemetry`
 
-M5F 不修改 local legacy `GET /api/camera/{camera_id}` 或 local `/api/v1/channels/{channel_id}/snapshot` contract；新增 Center endpoint：
+沿用既有 producer payload；未知、未在 Hub options 明列的 site 回 `404`。
+
+### `GET /api/v1/sites`
+
+供 `nine_space_monitor_hub` component discovery 與 polling。只回明列站點、camera
+mapping、最新 live／recording／snapshot attempt 與 last-good age；不回歷史統計、
+private site URL、credentials、JPEG body 或 telemetry export。
+
+## Hub snapshot contract
+
+不修改 local legacy `GET /api/camera/{camera_id}` 或 local
+`/api/v1/channels/{channel_id}/snapshot` contract；Hub 提供：
 
 ### `GET /api/v1/sites/{site_id}/cameras/{camera_id}/snapshot`
 
-- Center 有最後成功 JPEG，且其 age 小於或等於可設定 `max_stale_seconds`（預設 `120`）時：HTTP `200`、`Content-Type: image/jpeg`；即使最近一次 refresh attempt 失敗亦同。
+- Hub 有最後成功 JPEG，且其 age 小於或等於可設定 `max_stale_seconds`（預設 `120`）時：HTTP `200`、`Content-Type: image/jpeg`；即使最近一次 refresh attempt 失敗亦同。
 - 沒有最後成功 JPEG，或最後成功 JPEG 過期時：HTTP `503` JSON（例如 `snapshot_unavailable` 或 `snapshot_stale`）；不得回 JPEG。
 - 未知 site 或 camera：HTTP `404` JSON。
 - 此 endpoint 僅供明確指定 site/camera 的 consumer；不提供 snapshot history、list/export 或 telemetry embedding。
 
-Center UI 每 site 一個分頁；所有 camera 一律顯示最後成功圖片。最近 attempt 成功為綠框，失敗為紅框並顯示圖片 age；從未成功顯示 placeholder。前端以相對 `.../last-good-snapshot` route 取得 UI 顯示的最後成功圖片，該 route 不做 stale gate；明確指定 site/camera 的 consumer 應使用本節 `/snapshot` route，並由 `max_stale_seconds` 檢查可接受的新鮮度。兩者均不提供 snapshot history、list 或 export。
+Hub debug UI 每 site 一個分頁；所有 camera 顯示 last-good 圖片與目前狀態。前端以
+相對 `.../last-good-snapshot` route 顯示最後一張圖；component 使用有 stale gate 的
+`/snapshot` route。兩者均不提供 snapshot history、list 或 export。
 
-Center scheduler 使用每站手動 channel list；不得假設 channel count 或 `01`～`14` 命名。它以 bounded batch concurrency 執行，例如 13 channels、concurrency 4：`4/4/4/1`，完成一輪後等待 refresh interval。Add-on 的 `max_concurrency` 亦為 site 可設定、runtime bounded 的上限。
+Hub scheduler 使用 add-on options 中每站手動 channel list；不得假設 channel count 或
+命名。它以 bounded batch concurrency 執行，例如 13 channels、concurrency 4：
+`4/4/4/1`，完成一輪後等待 refresh interval。
 
-每次 snapshot attempt 的成功、timestamp、latency 與去敏 error code 可進 telemetry SQLite，供每 camera／site rolling 1h、24h、7d success rate 與 latency mean／population stddev；JPEG bytes 不得進 SQLite、telemetry export、log、fixture 或 Git。Center snapshot store 僅保存每 site/channel 一張 last-good JPEG，使用 atomic replace，不保存 history。
+每次 snapshot attempt 只在 RAM 保存最新成功、timestamp、latency 與去敏 error code；
+component 以 binary sensor／sensor 導入 Recorder。Hub snapshot store 僅保存每個
+site/channel 一張 last-good JPEG，使用 atomic replace，不保存 history。
 
 ## Future TODO
 
-- [x] Center Docker/SQLite metadata-only ingest/query/export API（M5A；不含 JPEG）。
+- [x] 將舊 Center 改為 9Space Monitor Hub Supervisor add-on，移除 SQLite/history/export。
 - [x] 依每站 mapping 產生 dashboard YAML renderer（M5D）。
-- [x] Ping (ICMP) 僅產生 Home Assistant local Lovelace／statistics cards，不進 Center。
-- [x] M5F Center 最新 snapshot API、bounded store/scheduler、UI 與統計；未修改 legacy local endpoint。
+- [x] Ping (ICMP) 僅產生 Home Assistant local Lovelace／statistics cards，不進 Hub。
+- [x] Hub 最新 snapshot API、bounded store/scheduler 與 debug UI；未修改 legacy local endpoint。
+- [x] Hub component camera／current-state entities；歷史交由 Recorder。
 - [ ] 同事完成切換後，停止直接呼叫 local legacy API。
 - [ ] 移除 local API 的不必要公網 port forwarding。
 - [ ] 評估 Tailscale ACL、service identity 或 API token。

@@ -1,4 +1,4 @@
-"""Bounded last-good JPEG filesystem store, separate from telemetry SQLite."""
+"""Bounded last-good JPEG filesystem store; status history is not persisted."""
 
 from __future__ import annotations
 

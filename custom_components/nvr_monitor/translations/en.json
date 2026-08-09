@@ -6,7 +6,7 @@
       "reconfigure_successful": "Configuration updated successfully."
     },
     "error": {
-      "invalid_telemetry": "Telemetry settings must use a valid Center ingest URL and explicit allowlisted mapping.",
+      "invalid_telemetry": "Telemetry settings must use a valid Hub ingest URL and explicit allowlisted mapping.",
       "already_configured": "This add-on URL is already configured.",
       "cannot_connect": "Cannot connect to the local add-on.",
       "invalid_response": "The add-on returned an invalid response.",
@@ -22,12 +22,12 @@
       },
       "reconfigure": {
         "title": "Edit add-on connection",
-        "description": "Telemetry is optional. Its mapping is stored only in this Home Assistant config entry and is never sent to Center.",
+        "description": "Telemetry is optional. Its mapping is stored only in this Home Assistant config entry and is never sent to Hub.",
         "data": {
           "addon_base_url": "Add-on base URL",
           "telemetry_site_id": "Telemetry site ID",
           "telemetry_display_name": "Telemetry display name",
-          "telemetry_center_url": "Center telemetry ingest URL",
+          "telemetry_center_url": "Hub telemetry ingest URL",
           "telemetry_mapping": "Telemetry mapping JSON"
         }
       }

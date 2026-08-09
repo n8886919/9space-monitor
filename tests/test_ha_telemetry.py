@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 import unittest
 
-from center.validation import validate_batch
+from nine_space_monitor_hub.validation import validate_batch
 
 
 MODULE_PATH = Path(__file__).parents[1] / "custom_components/nvr_monitor/ha_telemetry.py"
