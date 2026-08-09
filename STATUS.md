@@ -8,9 +8,9 @@ Updated: 2026-08-09
 - Functional release commit: `69f28e6`.
 - Local code versions: add-on `0.3.5`; integration `0.2.4`.
 - M5E v0.3.5 已部署至承德並完成使用者接受的 35 分鐘 observation。
-- Local correction 將 Ping (ICMP)／RTT／packet loss 保留在 Home Assistant：integration 不再送 `ha.ping`，Center 不再接受或顯示 Ping，dashboard renderer 改產生 local current／rolling 1h／rolling 24h cards；已 commit 為 `69f28e6`，尚未 push 或部署。
+- Local correction 將 Ping (ICMP)／RTT／packet loss 保留在 Home Assistant：integration 不再送 `ha.ping`，Center 不再接受或顯示 Ping，dashboard renderer 改產生 local current／rolling 1h／rolling 24h cards；functional release `69f28e6` 已 push，尚未部署。
 - Deployment contract 已改為 Snapshot add-on 僅走既有 Supervisor managed Git repository；禁止 HA local `/addons` source install。Center 維持獨立 Git checkout／container deployment，不是 HA add-on。
-- `2a89719`、`b401d2a` 是部署後的 local docs-only commits；2026-08-09 fetch 後 `origin/main`／遠端 task branch 仍為 `902eaa9`，local commits 待 push。
+- `2a89719`、`b401d2a` 是部署後的 docs-only commits；task branch 已 push 至 `6f49bc7`，`origin/main` 仍為 `902eaa9`。
 
 ## Deployed
 
