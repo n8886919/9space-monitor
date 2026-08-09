@@ -9,6 +9,7 @@ import json
 import math
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 MAX_BODY_BYTES = 512 * 1024
 MAX_BATCH_EVENTS = 500
@@ -210,11 +211,65 @@ class ValidatedEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class SnapshotRegistration:
+    base_url: str
+    channels: tuple[int, ...]
+    concurrency: int
+    timeout_seconds: int
+    refresh_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
 class ValidatedBatch:
     site_id: str
     display_name: str
     source: str
     events: tuple[ValidatedEvent, ...]
+    snapshot_registration: SnapshotRegistration | None = None
+
+
+def _validate_snapshot_registration(value: Any) -> SnapshotRegistration:
+    expected = {"base_url", "channels", "concurrency", "timeout_seconds", "refresh_seconds"}
+    if not isinstance(value, dict) or set(value) != expected:
+        raise TelemetryValidationError("invalid_snapshot_registration")
+    base_url = value["base_url"]
+    try:
+        parsed = urlsplit(base_url) if isinstance(base_url, str) else None
+        port = parsed.port if parsed else None
+    except ValueError:
+        raise TelemetryValidationError("invalid_snapshot_registration") from None
+    hostname = parsed.hostname if parsed else ""
+    try:
+        address = ipaddress.ip_address(hostname)
+        tailnet_host = address in ipaddress.ip_network("100.64.0.0/10") or address in ipaddress.ip_network(
+            "fd7a:115c:a1e0::/48"
+        )
+    except ValueError:
+        tailnet_host = hostname.lower().endswith(".ts.net")
+    if (
+        not parsed or parsed.scheme not in {"http", "https"} or not parsed.hostname
+        or not tailnet_host
+        or parsed.username or parsed.password or parsed.query or parsed.fragment
+        or parsed.path not in {"", "/"} or port is not None and not 1 <= port <= 65535
+    ):
+        raise TelemetryValidationError("invalid_snapshot_registration")
+    channels = value["channels"]
+    if (
+        not isinstance(channels, list) or not channels or len(channels) > 256
+        or any(type(channel) is not int or not 1 <= channel <= 4096 for channel in channels)
+        or len(set(channels)) != len(channels)
+    ):
+        raise TelemetryValidationError("invalid_snapshot_registration")
+    concurrency = value["concurrency"]
+    timeout = value["timeout_seconds"]
+    refresh = value["refresh_seconds"]
+    if (
+        type(concurrency) is not int or not 1 <= concurrency <= 8
+        or type(timeout) is not int or not 2 <= timeout <= 60
+        or type(refresh) is not int or not 5 <= refresh <= 86400
+    ):
+        raise TelemetryValidationError("invalid_snapshot_registration")
+    return SnapshotRegistration(base_url.rstrip("/"), tuple(channels), concurrency, timeout, refresh)
 
 
 def _parse_timestamp(value: Any, field: str) -> int:
@@ -331,12 +386,16 @@ def _validate_metric(key: Any, value: Any) -> bool | int | float | str | None:
 
 def validate_batch(payload: Any) -> ValidatedBatch:
     """Validate a parsed JSON batch and return its normalized representation."""
-    if not isinstance(payload, dict) or set(payload) != {
+    required = {
         "site_id",
         "display_name",
         "source",
         "events",
-    }:
+    }
+    keys = set(payload) if isinstance(payload, dict) else set()
+    if not isinstance(payload, dict) or (
+        keys != required and keys != required | {"snapshot_registration"}
+    ):
         raise TelemetryValidationError("invalid_batch_contract")
     site_id = payload["site_id"]
     if (
@@ -349,6 +408,11 @@ def validate_batch(payload: Any) -> ValidatedBatch:
     source = payload["source"]
     if source not in {"addon", "integration"}:
         raise TelemetryValidationError("invalid_source")
+    registration = None
+    if "snapshot_registration" in payload:
+        if source != "addon":
+            raise TelemetryValidationError("invalid_snapshot_registration")
+        registration = _validate_snapshot_registration(payload["snapshot_registration"])
     raw_events = payload["events"]
     if not isinstance(raw_events, list) or not raw_events:
         raise TelemetryValidationError("events_must_be_nonempty_list")
@@ -396,7 +460,7 @@ def validate_batch(payload: Any) -> ValidatedBatch:
             )
         )
 
-    return ValidatedBatch(site_id, display_name, source, tuple(events))
+    return ValidatedBatch(site_id, display_name, source, tuple(events), registration)
 
 
 def validate_site_id(site_id: str) -> str:

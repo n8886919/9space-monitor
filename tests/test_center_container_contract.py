@@ -15,8 +15,8 @@ class HubAddonContractTests(unittest.TestCase):
         self.assertIn("slug: 9space_monitor_hub", config)
         self.assertIn("ingress_port: 8765", config)
         self.assertIn("ingress: true", config)
-        self.assertIn("8765/tcp: null", config)
-        self.assertIn("sites: []", config)
+        self.assertIn("8765/tcp: 8765", config)
+        self.assertNotIn("sites:", config)
 
     def test_container_runs_hub_package_and_has_no_sqlite_runtime(self):
         dockerfile = (HUB / "Dockerfile").read_text()

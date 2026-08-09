@@ -17,6 +17,7 @@ from telemetry import (
     NvrTelemetryModel,
     TelemetryProducer,
     safe_center_url,
+    safe_snapshot_base_url,
     safe_site_metadata,
     telemetry_channel_ids,
 )
@@ -31,7 +32,7 @@ OPTIONS_PATH = "/data/options.json"
 QUEUE_TIMEOUT_MS = 300
 DEFAULT_SNAPSHOT_CONCURRENCY = 1
 MAX_SNAPSHOT_CONCURRENCY = 8
-ADDON_VERSION = "0.3.8"
+ADDON_VERSION = "0.3.9"
 
 _sem: Optional[asyncio.Semaphore] = None
 
@@ -74,6 +75,7 @@ async def _telemetry_loop() -> None:
         site_id=site_id,
         display_name=display_name,
         queue_max_batches=max(1, int(_opt(opts, "telemetry_queue_max_batches", 100))),
+        registration=_hub_snapshot_registration(opts),
     )
     model = NvrTelemetryModel()
     producer.start()
@@ -139,6 +141,27 @@ def _snapshot_concurrency(opts: dict) -> int:
     if type(value) is not int or value < 1:
         return DEFAULT_SNAPSHOT_CONCURRENCY
     return min(value, MAX_SNAPSHOT_CONCURRENCY)
+
+
+def _hub_snapshot_registration(opts: dict) -> dict | None:
+    """Derive Hub scheduling from existing local options, fail closed on bad input."""
+    base_url = safe_snapshot_base_url(opts.get("hub_snapshot_base_url"))
+    channels = list(telemetry_channel_ids(opts.get("channel_count")))
+    if base_url is None or not channels:
+        return None
+    timeout_ms = opts.get("health_timeout_ms", 10000)
+    if type(timeout_ms) is not int or timeout_ms < 1:
+        timeout_ms = 10000
+    refresh_seconds = opts.get("hub_snapshot_refresh_seconds", 30)
+    if type(refresh_seconds) is not int:
+        refresh_seconds = 30
+    return {
+        "base_url": base_url,
+        "channels": channels,
+        "concurrency": _snapshot_concurrency(opts),
+        "timeout_seconds": min(60, max(2, (timeout_ms + 999) // 1000 + 5)),
+        "refresh_seconds": min(86400, max(5, refresh_seconds)),
+    }
 
 
 def _build_rtsp_url(opts: dict, camera_id: str) -> str:

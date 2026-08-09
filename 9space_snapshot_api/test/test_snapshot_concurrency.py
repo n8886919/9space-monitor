@@ -17,6 +17,35 @@ import main  # noqa: E402
 
 
 class SnapshotConcurrencyTests(unittest.TestCase):
+    def test_hub_registration_reuses_local_snapshot_limits(self) -> None:
+        registration = main._hub_snapshot_registration({
+            "hub_snapshot_base_url": "http://100.64.0.10:8222/",
+            "hub_snapshot_refresh_seconds": 45,
+            "channel_count": 3,
+            "max_concurrency": 2,
+            "health_timeout_ms": 1200,
+        })
+        self.assertEqual(registration, {
+            "base_url": "http://100.64.0.10:8222",
+            "channels": [1, 2, 3],
+            "concurrency": 2,
+            "timeout_seconds": 7,
+            "refresh_seconds": 45,
+        })
+
+    def test_hub_registration_is_optional_and_bad_bounds_fall_back(self) -> None:
+        self.assertIsNone(main._hub_snapshot_registration({"channel_count": 3}))
+        registration = main._hub_snapshot_registration({
+            "hub_snapshot_base_url": "https://site.example.ts.net",
+            "hub_snapshot_refresh_seconds": True,
+            "channel_count": 1,
+            "max_concurrency": 999,
+            "health_timeout_ms": "bad",
+        })
+        self.assertEqual(registration["concurrency"], 8)
+        self.assertEqual(registration["timeout_seconds"], 15)
+        self.assertEqual(registration["refresh_seconds"], 30)
+
     def _peak_for_option(self, option) -> int:
         """Capture activity, rather than semaphore internals, proves the cap."""
 

@@ -110,6 +110,34 @@ class HubAppTests(unittest.TestCase):
         status, _headers, body = self.request("GET", "/api/v1/sites")
         self.assertEqual([site["site_id"] for site in json.loads(body)["sites"]], ["safe-site"])
 
+    def test_addon_registration_discovers_site_without_hub_site_options(self):
+        empty_state = CurrentState(())
+
+        async def immediate(function, *args, **kwargs):
+            return function(*args, **kwargs)
+
+        app = create_app(
+            sites=(), snapshots=self.store, state=empty_state,
+            max_stale_seconds=120, run_sync=immediate,
+        )
+        payload = self.payload()
+        payload["snapshot_registration"] = {
+            "base_url": "http://100.64.0.10:8222",
+            "channels": [1, 2],
+            "concurrency": 1,
+            "timeout_seconds": 15,
+            "refresh_seconds": 30,
+        }
+        status, _headers, _body = asyncio.run(asgi_request(
+            app, "POST", "/api/v1/telemetry", chunks=[json.dumps(payload).encode()]
+        ))
+        self.assertEqual(status, 200)
+        status, _headers, body = asyncio.run(asgi_request(app, "GET", "/api/v1/sites"))
+        discovered = json.loads(body)["sites"]
+        self.assertEqual(discovered[0]["site_id"], "safe-site")
+        self.assertEqual([camera["camera_id"] for camera in discovered[0]["cameras"]], [1, 2])
+        self.assertNotIn("base_url", json.dumps(discovered))
+
     def test_streaming_body_bound_and_sensitive_values_fail_closed(self):
         status, _headers, _body = self.request(
             "POST", "/api/v1/telemetry", chunks=[b"x" * (MAX_BODY_BYTES + 1)], content_length=False

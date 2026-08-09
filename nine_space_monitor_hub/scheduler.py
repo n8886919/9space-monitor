@@ -10,17 +10,10 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
-from urllib.parse import urlsplit
 
 from .snapshots import DEFAULT_MAX_SNAPSHOT_BYTES, SnapshotStore, validate_camera_id
-from .validation import TelemetryValidationError, validate_display_name, validate_site_id
 
 MAX_CONFIG_BYTES = 128 * 1024
-MAX_SITES = 32
-MAX_CHANNELS_PER_SITE = 256
-MAX_CONCURRENCY = 8
-MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS = 1, 15
-MIN_REFRESH_SECONDS, MAX_REFRESH_SECONDS = 5, 86400
 
 
 @dataclass(frozen=True)
@@ -47,80 +40,34 @@ class AttemptSink(Protocol):
     ) -> None: ...
 
 
-def load_options(path: str | Path = "/data/options.json") -> tuple[tuple[SnapshotSite, ...], int, int]:
+def load_options(path: str | Path = "/data/options.json") -> tuple[int, int]:
     """Load validated Supervisor options without logging private site URLs."""
     try:
         with Path(path).open("rb") as handle:
             raw_bytes = handle.read(MAX_CONFIG_BYTES + 1)
     except FileNotFoundError:
-        return (), 120, 1024 * 1024 * 1024
+        return 120, 1024 * 1024 * 1024
     if len(raw_bytes) > MAX_CONFIG_BYTES:
         raise ValueError("hub_options_too_large")
     try:
         raw = json.loads(raw_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("invalid_hub_options") from exc
-    if not isinstance(raw, dict) or set(raw) != {
-        "sites", "max_stale_seconds", "snapshot_store_limit_mb"
-    }:
+    required = {"max_stale_seconds", "snapshot_store_limit_mb"}
+    allowed = required | {"sites"}
+    if (
+        not isinstance(raw, dict)
+        or not required.issubset(raw)
+        or not set(raw).issubset(allowed)
+    ):
         raise ValueError("invalid_hub_options")
-    sites_raw = raw["sites"]
-    if not isinstance(sites_raw, list) or len(sites_raw) > MAX_SITES:
-        raise ValueError("invalid_hub_sites")
-    sites = tuple(_site(item) for item in sites_raw)
-    if len({site.site_id for site in sites}) != len(sites):
-        raise ValueError("duplicate_snapshot_site")
     stale = raw["max_stale_seconds"]
     limit_mb = raw["snapshot_store_limit_mb"]
     if type(stale) is not int or not 0 <= stale <= 86400:
         raise ValueError("invalid_max_stale_seconds")
     if type(limit_mb) is not int or not 8 <= limit_mb <= 8192:
         raise ValueError("invalid_snapshot_store_limit")
-    return sites, stale, limit_mb * 1024 * 1024
-
-
-def _site(value: Any) -> SnapshotSite:
-    expected = {
-        "site_id", "display_name", "base_url", "channels",
-        "concurrency", "timeout_seconds", "refresh_seconds",
-    }
-    if not isinstance(value, dict) or set(value) != expected:
-        raise ValueError("invalid_snapshot_site")
-    try:
-        site_id = validate_site_id(value["site_id"])
-        display_name = validate_display_name(value["display_name"])
-    except TelemetryValidationError as exc:
-        raise ValueError("invalid_snapshot_site") from exc
-    base_url = value["base_url"]
-    parsed = urlsplit(base_url) if isinstance(base_url, str) else None
-    if (
-        not parsed or parsed.scheme not in {"http", "https"} or not parsed.netloc
-        or parsed.username or parsed.password or parsed.query or parsed.fragment
-        or parsed.path not in {"", "/"}
-    ):
-        raise ValueError("invalid_snapshot_site_url")
-    channels = value["channels"]
-    if not isinstance(channels, list) or not channels or len(channels) > MAX_CHANNELS_PER_SITE:
-        raise ValueError("invalid_snapshot_channels")
-    try:
-        checked = tuple(validate_camera_id(channel) for channel in channels)
-    except ValueError as exc:
-        raise ValueError("invalid_snapshot_channels") from exc
-    if len(set(checked)) != len(checked):
-        raise ValueError("duplicate_snapshot_channel")
-    bounds = ("concurrency", "timeout_seconds", "refresh_seconds")
-    if any(type(value[key]) is not int for key in bounds):
-        raise ValueError("invalid_snapshot_bounds")
-    if (
-        not 1 <= value["concurrency"] <= MAX_CONCURRENCY
-        or not MIN_TIMEOUT_SECONDS <= value["timeout_seconds"] <= MAX_TIMEOUT_SECONDS
-        or not MIN_REFRESH_SECONDS <= value["refresh_seconds"] <= MAX_REFRESH_SECONDS
-    ):
-        raise ValueError("invalid_snapshot_bounds")
-    return SnapshotSite(
-        site_id, display_name, base_url.rstrip("/"), checked,
-        value["concurrency"], value["timeout_seconds"], value["refresh_seconds"],
-    )
+    return stale, limit_mb * 1024 * 1024
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -155,12 +102,13 @@ class SnapshotScheduler:
         fetcher: Callable[[str, int], Awaitable[tuple[int, str, bytes]]] = default_fetch,
         run_sync: Callable[..., Awaitable[Any]] = asyncio.to_thread,
     ) -> None:
-        self.sites = sites
+        self.sites = {site.site_id: site for site in sites}
         self.state = state
         self.snapshots = snapshots
         self.fetcher = fetcher
         self.run_sync = run_sync
-        self._task: asyncio.Task[None] | None = None
+        self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._running = False
 
     async def run_round(self, site: SnapshotSite) -> None:
         for start in range(0, len(site.channels), site.concurrency):
@@ -205,19 +153,31 @@ class SnapshotScheduler:
             await self.run_round(site)
             await asyncio.sleep(site.refresh_seconds)
 
-    async def _run(self) -> None:
-        await asyncio.gather(*(self._loop(site) for site in self.sites))
-
     async def start(self) -> None:
-        if self._task is None and self.sites:
-            self._task = asyncio.create_task(self._run())
+        if self._running:
+            return
+        self._running = True
+        for site in tuple(self.sites.values()):
+            await self.upsert(site)
+
+    async def upsert(self, site: SnapshotSite) -> None:
+        previous = self.sites.get(site.site_id)
+        self.sites[site.site_id] = site
+        if not self._running or previous == site and site.site_id in self._tasks:
+            return
+        old = self._tasks.pop(site.site_id, None)
+        if old is not None:
+            old.cancel()
+            try:
+                await old
+            except asyncio.CancelledError:
+                pass
+        self._tasks[site.site_id] = asyncio.create_task(self._loop(site))
 
     async def stop(self) -> None:
-        task, self._task = self._task, None
-        if task is None:
-            return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        self._running = False
+        tasks, self._tasks = tuple(self._tasks.values()), {}
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)

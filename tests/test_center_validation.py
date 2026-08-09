@@ -32,6 +32,26 @@ def valid_payload() -> dict:
 
 
 class CenterValidationTests(unittest.TestCase):
+    def test_snapshot_registration_is_addon_only_and_strict(self) -> None:
+        payload = valid_payload()
+        payload["snapshot_registration"] = {
+            "base_url": "http://100.64.0.10:8222",
+            "channels": [1, 2],
+            "concurrency": 1,
+            "timeout_seconds": 15,
+            "refresh_seconds": 30,
+        }
+        batch = validate_batch(payload)
+        self.assertEqual(batch.snapshot_registration.channels, (1, 2))
+        self.assertEqual(batch.snapshot_registration.timeout_seconds, 15)
+        payload["source"] = "integration"
+        with self.assertRaisesRegex(TelemetryValidationError, "snapshot_registration"):
+            validate_batch(payload)
+        payload["source"] = "addon"
+        payload["snapshot_registration"]["base_url"] = "http://user:pass@example.invalid"
+        with self.assertRaisesRegex(TelemetryValidationError, "snapshot_registration"):
+            validate_batch(payload)
+
     def test_accepts_chinese_display_name_and_primitives(self) -> None:
         batch = validate_batch(valid_payload())
         self.assertEqual(batch.site_id, "chengde")

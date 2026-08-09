@@ -16,22 +16,24 @@
 
 ## Add-on options
 
-`sites` 必須明確列出每個站點：
+Hub 本身只保留全域 snapshot freshness 與容量設定：
 
 ```yaml
-sites:
-  - site_id: example-site
-    display_name: Example
-    base_url: http://site-addon-hostname:8000
-    channels: [1, 2]
-    concurrency: 2
-    timeout_seconds: 10
-    refresh_seconds: 30
 max_stale_seconds: 120
 snapshot_store_limit_mb: 1024
 ```
 
-真實 URL 與站點 mapping 只放 Supervisor options，不提交到 Git。
+站點資料由各站 Snapshot add-on 隨 telemetry 自動註冊。Snapshot add-on options 中：
+
+- `site_id`、`site_display_name`、`channel_count` 提供站點與 channel mapping。
+- `max_concurrency` 直接作為 Hub 拉圖 concurrency。
+- Hub timeout 由 `health_timeout_ms` 換算並加 5 秒 capture margin，限制在 2–60 秒。
+- `hub_snapshot_refresh_seconds` 控制 Hub 拉圖週期。
+- `hub_snapshot_base_url` 是 Hub 可連線的 Snapshot API Tailscale origin，只接受
+  `100.64.0.0/10`、Tailscale IPv6 或 `*.ts.net`，不得包含 credentials、path、query。
+
+舊版 Hub 已保存的 `sites` option 在升級時只為相容而忽略。真實 URL 只放
+Supervisor options，不提交到 Git，也不出現在 discovery API。
 
 ## API
 
@@ -42,5 +44,5 @@ snapshot_store_limit_mb: 1024
   `max_stale_seconds` 內的 JPEG；沒有或過期時回 `503` JSON。
 - `/api/v1/dashboard/summary` 與 `/`：過渡／debug UI，沒有 rolling history。
 
-Hub add-on 預設不映射 host port；component 應使用 Supervisor 產生的 add-on
-internal hostname 與 container port `8765`。
+Hub 映射 host port `8765` 接收各站 telemetry；component 應使用 Supervisor 產生的
+add-on internal hostname 與 container port `8765`。

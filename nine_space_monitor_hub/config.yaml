@@ -1,5 +1,5 @@
 name: 9Space Monitor Hub
-version: "0.1.0"
+version: "0.2.0"
 slug: 9space_monitor_hub
 description: >-
   Central snapshot hub for 9Space sites. Keeps one last-good JPEG per camera;
@@ -16,20 +16,10 @@ ingress_port: 8765
 panel_icon: mdi:cctv
 panel_title: 9Space Monitor Hub
 ports:
-  8765/tcp: null
+  8765/tcp: 8765
 options:
-  sites: []
   max_stale_seconds: 120
   snapshot_store_limit_mb: 1024
 schema:
-  sites:
-    - site_id: str
-      display_name: str
-      base_url: url
-      channels:
-        - int
-      concurrency: int
-      timeout_seconds: int
-      refresh_seconds: int
   max_stale_seconds: int
   snapshot_store_limit_mb: int

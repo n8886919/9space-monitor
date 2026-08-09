@@ -34,34 +34,34 @@ def create_app(
     state: CurrentState | None = None,
     run_sync: Callable[..., Awaitable[Any]] | None = None,
 ) -> FastAPI:
-    configured_sites, configured_stale, store_limit = (
-        load_options(OPTIONS_PATH) if sites is None else (sites, 120, 1024 * 1024 * 1024)
+    configured_stale, store_limit = (
+        load_options(OPTIONS_PATH) if sites is None else (120, 1024 * 1024 * 1024)
     )
-    active_sites = configured_sites if sites is None else sites
+    active_sites = () if sites is None else sites
     stale_seconds = configured_stale if max_stale_seconds is None else max_stale_seconds
     snapshot_store = snapshots or SnapshotStore(SNAPSHOT_ROOT, store_limit_bytes=store_limit)
     current_state = state or CurrentState(active_sites)
 
+    scheduler = SnapshotScheduler(
+        active_sites,
+        current_state,
+        snapshot_store,
+        run_sync=run_sync or asyncio.to_thread,
+    )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        scheduler = SnapshotScheduler(
-            active_sites,
-            current_state,
-            snapshot_store,
-            run_sync=app.state.run_sync,
-        )
-        app.state.scheduler = scheduler
         await scheduler.start()
         try:
             yield
         finally:
             await scheduler.stop()
 
-    app = FastAPI(title="9Space Monitor Hub", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="9Space Monitor Hub", version="0.2.0", lifespan=lifespan)
     app.state.run_sync = run_sync or asyncio.to_thread
     app.state.snapshots = snapshot_store
     app.state.current = current_state
-    app.state.scheduler = None
+    app.state.scheduler = scheduler
     app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
 
     async def call_sync(request: Request, function: Callable[..., Any], *args, **kwargs):
@@ -105,6 +105,20 @@ def create_app(
             raise HTTPException(status_code=400, detail="invalid_json") from None
         except TelemetryValidationError as err:
             raise HTTPException(status_code=422, detail=str(err)) from None
+        if batch.snapshot_registration is not None:
+            registration = batch.snapshot_registration
+            site = SnapshotSite(
+                batch.site_id,
+                batch.display_name,
+                registration.base_url,
+                registration.channels,
+                registration.concurrency,
+                registration.timeout_seconds,
+                registration.refresh_seconds,
+            )
+            if not request.app.state.current.register(site):
+                raise HTTPException(status_code=422, detail="site_limit_reached")
+            await request.app.state.scheduler.upsert(site)
         try:
             accepted = request.app.state.current.ingest(batch)
         except KeyError:
@@ -146,8 +160,7 @@ def create_app(
             validate_camera_id(camera_id)
         except (TelemetryValidationError, ValueError):
             return JSONResponse(status_code=404, content={"error_code": "snapshot_not_found"})
-        configured = {site.site_id: site for site in active_sites}
-        if site_id not in configured or camera_id not in configured[site_id].channels:
+        if not request.app.state.current.has_camera(site_id, camera_id):
             return JSONResponse(status_code=404, content={"error_code": "snapshot_not_found"})
         path = await call_sync(
             request,

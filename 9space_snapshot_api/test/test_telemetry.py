@@ -19,6 +19,7 @@ from telemetry import (
     NvrTelemetryModel,
     TelemetryProducer,
     safe_center_url,
+    safe_snapshot_base_url,
     safe_site_metadata,
     telemetry_channel_ids,
 )
@@ -72,6 +73,28 @@ class CancellationIgnoringClient(FakeCenterClient):
 
 
 class TelemetryProducerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_registration_is_attached_to_every_addon_batch(self) -> None:
+        client = FakeCenterClient()
+        registration = {
+            "base_url": "http://100.64.0.10:8222",
+            "channels": [1, 2],
+            "concurrency": 1,
+            "timeout_seconds": 15,
+            "refresh_seconds": 30,
+        }
+        producer = TelemetryProducer(
+            center_url="https://center.invalid/api/v1/telemetry",
+            site_id="sample-site",
+            display_name="Sample",
+            client=client,
+            registration=registration,
+        )
+        producer.start()
+        producer.enqueue([{"kind": "nvr.live"}])
+        await asyncio.wait_for(client.started.wait(), timeout=0.2)
+        await producer.stop()
+        self.assertEqual(client.payloads[0]["snapshot_registration"], registration)
+
     async def test_queue_is_bounded_and_drops_without_blocking(self) -> None:
         client = FakeCenterClient()
         client.block = True
@@ -380,3 +403,23 @@ class NvrTelemetryModelTests(unittest.TestCase):
         ids = telemetry_channel_ids(10_000)
         self.assertEqual(ids.start, 1)
         self.assertEqual(ids.stop, 4097)
+
+    def test_snapshot_base_url_is_tailnet_http_origin_only(self) -> None:
+        self.assertEqual(
+            safe_snapshot_base_url("http://100.64.0.10:8222/"),
+            "http://100.64.0.10:8222",
+        )
+        self.assertEqual(
+            safe_snapshot_base_url("https://site.example.ts.net/"),
+            "https://site.example.ts.net",
+        )
+        for value in (
+            "",
+            "http://user:pass@site.example.invalid:8222",
+            "http://site.example.invalid:8222/path",
+            "http://site.example.invalid:8222?token=x",
+            "http://127.0.0.1:8222",
+            "http://192.168.1.10:8222",
+        ):
+            with self.subTest(value=value):
+                self.assertIsNone(safe_snapshot_base_url(value))

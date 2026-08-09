@@ -143,6 +143,38 @@ def safe_center_url(value: object) -> str | None:
     return value
 
 
+def safe_snapshot_base_url(value: object) -> str | None:
+    """Validate the Tailscale origin advertised to Hub without logging it."""
+    if not isinstance(value, str) or not value or len(value) > 2048:
+        return None
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return None
+    hostname = parsed.hostname or ""
+    try:
+        address = ipaddress.ip_address(hostname)
+        tailnet_host = address in ipaddress.ip_network("100.64.0.0/10") or address in ipaddress.ip_network(
+            "fd7a:115c:a1e0::/48"
+        )
+    except ValueError:
+        tailnet_host = hostname.lower().endswith(".ts.net")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or not tailnet_host
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+        or port is not None and not 1 <= port <= 65535
+    ):
+        return None
+    return value.rstrip("/")
+
+
 def telemetry_channel_ids(channel_count: object) -> range:
     """Keep telemetry within Center's channel-id contract without changing local API."""
     try:
@@ -290,6 +322,7 @@ class TelemetryProducer:
         queue_max_batches: int = DEFAULT_QUEUE_MAX_BATCHES,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         shutdown_wait_seconds: float = DEFAULT_SHUTDOWN_WAIT_SECONDS,
+        registration: Mapping[str, Any] | None = None,
     ) -> None:
         self._center_url = center_url
         self._site_id = site_id
@@ -300,6 +333,7 @@ class TelemetryProducer:
         )
         self._timeout_seconds = timeout_seconds
         self._shutdown_wait_seconds = shutdown_wait_seconds
+        self._registration = dict(registration) if registration is not None else None
         self._task: asyncio.Task[None] | None = None
         self._stopping_tasks: set[asyncio.Task[None]] = set()
         self._stopping = False
@@ -343,6 +377,8 @@ class TelemetryProducer:
                 "source": "addon",
                 "events": list(events),
             }
+            if self._registration is not None:
+                payload["snapshot_registration"] = self._registration
             try:
                 await asyncio.wait_for(
                     self._client.post(self._center_url, payload, self._timeout_seconds),

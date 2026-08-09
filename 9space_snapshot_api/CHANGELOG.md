@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.9 - 2026-08-10
+
+- Added runtime-only Hub snapshot registration to add-on telemetry batches.
+- Reused `channel_count`, `max_concurrency`, and `health_timeout_ms` for Hub
+  scheduling; added only the advertised Tailscale origin and refresh interval.
+- Kept telemetry delivery active when snapshot registration is not configured.
+
 ## 0.3.8 - 2026-08-09
 
 - Removed all 24-hour live-video history from the add-on and Center telemetry.

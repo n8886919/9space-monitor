@@ -246,11 +246,14 @@ Producer 規則：
 
 ### `POST /api/v1/telemetry`
 
-沿用既有 producer payload；未知、未在 Hub options 明列的 site 回 `404`。
+沿用既有 producer payload。Snapshot add-on 可附加嚴格驗證的
+`snapshot_registration`，Hub 先在 RAM 註冊／更新站點，再接受同一批 events；
+integration producer 不得附加此欄位。註冊不寫入磁碟，Hub restart 後由 producer
+下一批重新建立。
 
 ### `GET /api/v1/sites`
 
-供 `nine_space_monitor_hub` component discovery 與 polling。只回明列站點、camera
+供 `nine_space_monitor_hub` component discovery 與 polling。只回已註冊站點、camera
 mapping、最新 live／recording／snapshot attempt 與 last-good age；不回歷史統計、
 private site URL、credentials、JPEG body 或 telemetry export。
 
@@ -270,8 +273,10 @@ Hub debug UI 每 site 一個分頁；所有 camera 顯示 last-good 圖片與目
 相對 `.../last-good-snapshot` route 顯示最後一張圖；component 使用有 stale gate 的
 `/snapshot` route。兩者均不提供 snapshot history、list 或 export。
 
-Hub scheduler 使用 add-on options 中每站手動 channel list；不得假設 channel count 或
-命名。它以 bounded batch concurrency 執行，例如 13 channels、concurrency 4：
+Hub scheduler 使用 Snapshot add-on 自動註冊的 channel list；不得假設 channel count 或
+命名。concurrency 沿用站點 `max_concurrency`，timeout 由 `health_timeout_ms` 加 bounded
+capture margin 換算，refresh 使用 `hub_snapshot_refresh_seconds`。例如 13 channels、
+concurrency 4：
 `4/4/4/1`，完成一輪後等待 refresh interval。
 
 每次 snapshot attempt 只在 RAM 保存最新成功、timestamp、latency 與去敏 error code；

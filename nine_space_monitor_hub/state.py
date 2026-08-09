@@ -16,6 +16,8 @@ from .validation import ValidatedBatch
 if TYPE_CHECKING:
     from .scheduler import SnapshotSite
 
+MAX_SITES = 32
+
 
 class CurrentState:
     """Keep only the newest event and newest snapshot attempt in RAM."""
@@ -44,6 +46,19 @@ class CurrentState:
                 }
                 accepted += 1
         return accepted
+
+    def register(self, site: SnapshotSite) -> bool:
+        """Replace one runtime registration; no registry is persisted."""
+        with self._lock:
+            if site.site_id not in self._sites and len(self._sites) >= MAX_SITES:
+                return False
+            self._sites[site.site_id] = site
+            return True
+
+    def has_camera(self, site_id: str, camera_id: int) -> bool:
+        with self._lock:
+            site = self._sites.get(site_id)
+            return site is not None and camera_id in site.channels
 
     def record_snapshot_attempt(
         self,

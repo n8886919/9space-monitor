@@ -13,31 +13,31 @@ from nine_space_monitor_hub.snapshots import SnapshotStore
 from nine_space_monitor_hub.state import CurrentState
 
 
-def options(site):
-    return {"sites": [site], "max_stale_seconds": 120, "snapshot_store_limit_mb": 64}
-
-
 class SchedulerTests(unittest.TestCase):
-    def test_options_reject_credentials_and_duplicate_channels(self):
-        base = {
-            "site_id": "safe", "display_name": "Safe", "base_url": "http://example.invalid",
-            "channels": [1], "concurrency": 1, "timeout_seconds": 1, "refresh_seconds": 5,
-        }
+    def test_options_only_contain_global_hub_limits(self):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, "options.json")
-            for update, code in (
-                ({"base_url": "http://user:pass@example.invalid"}, "invalid_snapshot_site_url"),
-                ({"channels": [1, 1]}, "duplicate_snapshot_channel"),
-            ):
-                value = {**base, **update}
-                with open(path, "w", encoding="utf-8") as handle:
-                    json.dump(options(value), handle)
-                with self.assertRaisesRegex(ValueError, code):
-                    load_options(path)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"max_stale_seconds": 120, "snapshot_store_limit_mb": 64}, handle)
+            self.assertEqual(load_options(path), (120, 64 * 1024 * 1024))
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"sites": [], "max_stale_seconds": 120, "snapshot_store_limit_mb": 64}, handle)
+            self.assertEqual(load_options(path), (120, 64 * 1024 * 1024))
+
+    def test_runtime_registration_is_bounded(self):
+        sites = tuple(
+            SnapshotSite(f"site-{index}", "Safe", "http://example.invalid", (1,), 1, 2, 5)
+            for index in range(32)
+        )
+        state = CurrentState(sites)
+        self.assertFalse(state.register(
+            SnapshotSite("site-overflow", "Safe", "http://example.invalid", (1,), 1, 2, 5)
+        ))
+        self.assertTrue(state.register(sites[0]))
 
     def test_batches_thirteen_channels_four_four_four_one(self):
         with tempfile.TemporaryDirectory() as root:
-            site = SnapshotSite("safe-site", "Safe", "http://example.invalid", tuple(range(1, 14)), 4, 1, 5)
+            site = SnapshotSite("safe-site", "Safe", "http://example.invalid", tuple(range(1, 14)), 4, 2, 5)
             state = CurrentState((site,)); store = SnapshotStore(os.path.join(root, "snap"))
             active = peak = 0; starts = []
 
@@ -60,7 +60,7 @@ class SchedulerTests(unittest.TestCase):
 
     def test_failed_attempt_preserves_last_good_and_replaces_only_ram_status(self):
         with tempfile.TemporaryDirectory() as root:
-            site = SnapshotSite("safe-site", "Safe", "http://example.invalid", (1,), 1, 1, 5)
+            site = SnapshotSite("safe-site", "Safe", "http://example.invalid", (1,), 1, 2, 5)
             state = CurrentState((site,)); store = SnapshotStore(os.path.join(root, "snap"))
 
             async def immediate(function, *args, **kwargs):
