@@ -1,46 +1,41 @@
 # Status
 
-Updated: 2026-08-09
+Updated: 2026-08-10
 
 ## Current
 
-- Branch: `agent/m5e-center-observability`
-- Functional release commit: `97fd83e`.
-- Local/deployed versions: add-on `0.3.8`; integration `0.2.7`.
-- Live-history ownership correction 已發布並部署：add-on 不保存 24 小時 live history，integration 以 bounded RAM 計算在線率與斷線次數，Home Assistant Recorder 是唯一持久化歷史；舊 add-on RAM history 已直接捨棄，未 migration。
-- Recorder bootstrap correction 已部署：integration 啟動時唯讀重建最近 24 小時 live window，在線率以已知狀態持續時間加權；HA reload 的 unavailable／unknown 不產生假斷線。
-- 使用者已確認 dashboard 在線率顯示正常；本次 `0.2.7` deployment transaction 與其中的 `0.2.6` rollback 已清除。
-- 有效片段數與 24 小時錄影覆蓋率仍由 Snapshot add-on 的最新 NVR query 提供；在線率與在線轉非在線斷線次數只留在 Home Assistant local，不送 Center。
-- M5E v0.3.5 已部署至承德並完成使用者接受的 35 分鐘 observation。
-- Ping (ICMP)／RTT／packet loss 保留在 Home Assistant：integration 不再送 `ha.ping`，Center 不再接受或顯示 Ping，dashboard renderer 產生 local current／rolling 1h／rolling 24h cards。
-- Deployment contract 已改為 Snapshot add-on 僅走既有 Supervisor managed Git repository；禁止 HA local `/addons` source install。Center 維持獨立 Git checkout／container deployment，不是 HA add-on。
-- Release commit `97fd83e` 已 push 至 task branch，並以 fast-forward 發布至 `origin/main`。
+- Branch: `main`.
+- Functional release commit: `023170b`，已 fast-forward push 至 `origin/main`；未 force push、未改寫歷史。
+- Local/deployed site versions: Snapshot add-on `0.3.8`; `nvr_monitor` integration `0.2.7`。
+- 舊 Center source 已改名並重構為 `nine_space_monitor_hub/` Supervisor add-on `0.1.0`，顯示名稱 `9Space Monitor Hub`／`9Space 監控中樞`。
+- Hub 不使用 SQLite、events/export 或 rolling history；telemetry／snapshot attempt 只保存最新值於 RAM。每個 site/channel 只持久化一張 atomic-replace last-good JPEG。
+- 新 `nine_space_monitor_hub` component `0.1.0` 提供 camera、live／recording／snapshot binary sensors 與 current metric sensors；Home Assistant Recorder 是狀態歷史唯一持有者。
+- Local `nvr_monitor` 仍保留最完整站點資訊與 local Ping；不取 Hub snapshot、不建立 Snapshot camera。
+- Root tests `90/90` PASS；Snapshot add-on test suite PASS；compileall、shell syntax 與 `git diff --check` PASS；Hub Docker build 與 runtime smoke PASS。
 
 ## Deployed
 
-- Center 已部署 exact M5E code commit `5c5876b`；container health、UI、API、SQLite integrity 與 running source hash 均 PASS。
-- 先前承德 add-on `0.3.5` rollout 的 options hash 保持不變，並完成使用者接受的 35 分鐘 observation。
-- 承德 add-on 已由相同 Supervisor managed repository 更新至 `0.3.7`，並建立 scoped update backup；health、14 channels 與四個 aggregate 欄位 contract PASS，錄影與 live metrics 均為 14/14 ready。
-- 承德 add-on 已由相同 managed repository 更新至 `0.3.8` 並建立 scoped backup；14/14 `live_checked_at` ready，add-on live-history fields 0，Center 最新 14 個 `nvr.live` events 含 live aggregates 0。
-- 先前 `0.3.5` immediate smoke PASS：health、14 channels、legacy multipart contract、v1 snapshot status/content-type/size 與 Center ingest；驗證未讀取或輸出 JPEG body。
-- 35 分鐘 observation：producer running、Center reachable、queue `0/100`、producer/scheduler drop `0`、live 與 recording `14/14`，DB 容量低且穩定。
-- Snapshot attempt 大多為 `14/14` success；曾有單一 sample 短暫 `13/14`，立即恢復並持續 `14/14`，last-good 保留。
-- Integration `0.2.5` 已通過 layout gate、`ha core check`、Core restart/recovery 與 restart 後 log 驗證；既有 1 個 entry、14 個 subentries、56 個 metrics entity IDs 均保留，disabled 0、replacement entity 0。
-- Integration `0.2.6` 已通過 layout gate、`ha core check`、Core restart/recovery 與 logs；既有 1 個 entry、14 個 subentries、28 個在線率／斷線 entity IDs 保留，replacement entity 0。
-- Integration `0.2.7` 已通過 layout gate、`ha core check`、Core restart/recovery、逐檔 source hash 與 logs；Recorder restore failure 0、14 個 exact live entity mappings、replacement entity 0，並完成 UI runtime 驗收。
+- 中央 Home Assistant 已安裝 `custom_components/nine_space_monitor_hub` source；`ha core check` PASS、Core restart PASS、restart 後 Hub component error count `0`。
+- Component 尚未建立 config entry，因 Hub add-on 尚未由使用者在 UI 安裝；未編輯 `.storage`。
+- 中央 HA 現有 App Store repositories 不包含本 monorepo；reload 後仍看不到 Hub。使用者需在 UI 加入 repository，安裝並設定 Hub options。
+- 舊 Penguin Center 的 Tailscale Serve 8765 已關閉，`9space-center-center-1` container 已移除；唯讀驗證為 `No serve config` 且無同名 container。
+- 安全審核未批准永久刪除舊 Center image、data volume 與 private env；它們仍殘留但不提供服務。
+- 既有承德 Snapshot add-on／`nvr_monitor` deployments 未在本任務修改；8122 未操作。
 
 ## Next
 
-1. 以 live entity registry 確認各 camera 的原生 Ping binary sensor、RTT average 與 packet-loss entity IDs；RTT／loss 預設停用時由使用者在 HA UI 啟用。
-2. 由使用者在指定 HA dashboard view 的 UI code editor 套用 renderer 產生的 NVR + local Ping cards；不得以 API 或直接編輯 `.storage` 代替。
+1. 使用者在中央 HA App Store UI 加入 `https://github.com/n8886919/9space-monitor`，安裝 `9Space Monitor Hub`。
+2. 在 Hub add-on UI options 明列各站 private base URL、site/display name、channels 與 bounded scheduler 參數；真實值不寫入 Git。
+3. 安裝啟動後，以 `ha apps info <actual_slug>` 取得 Supervisor internal hostname；在 HA UI 新增 `9Space Monitor Hub` integration，填入 `http://<actual-hostname>:8765`。
+4. 驗證 site/camera discovery、JPEG freshness、entities、Recorder history 與 Dashboard；不以 debug Web UI 作正式 UI 驗收。
+5. 若仍要永久刪除舊 Center image、volume 與 private env，需逐項明確批准。
 
 ## Blockers
 
-目前沒有 Recorder bootstrap 或 UI runtime blocker。
+- Hub add-on 的 UI installation、private site options 與 component config entry 是使用者負責的 HA UI gate；目前無 live Hub entity／snapshot 驗證。
 
 ## Temporary / last-known
 
-- `8122` 是獨立舊正式服務，不在 M5E 操作範圍。
-- 使用者於 35 分鐘時明確接受停止 observation；未完成原先規劃的一小時，不得改寫成一小時 PASS。
-- Integration `0.2.5` 本次 deployment transaction 已在 UI runtime 驗收後清除。
-- 不在此文件保存 host、URL、credentials、backup path 或 JPEG／footage。
+- `8122` 是獨立舊正式服務，永久不在本任務操作範圍。
+- 使用者於 35 分鐘時明確接受停止舊 observation；不得改寫成一小時 PASS。
+- 不在此文件保存 host、private URL、credentials、backup path 或 JPEG／footage。
