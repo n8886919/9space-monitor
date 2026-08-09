@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7 - 2026-08-09
+
+- Exposed valid recording segment count and recording coverage for the local
+  Home Assistant integration.
+- Added bounded, memory-only 24-hour live-video online rate and disconnect
+  transition aggregates. Initial offline observations do not count as
+  disconnects.
+
 ## 0.3.5 - 2026-08-08
 
 - Added bounded, metadata-only 24-hour recording interval aggregates and

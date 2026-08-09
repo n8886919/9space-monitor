@@ -54,6 +54,10 @@ def _fake_recording_query_channel(channel_id, nvr):
         "recording_recent": False,
         "last_recording": None,
         "error_code": None,
+        "metrics": {
+            "valid_file_count_24h": 42,
+            "recording_coverage_24h_pct": 97.5,
+        },
     }
 
 
@@ -115,6 +119,10 @@ class AddonApiTests(unittest.TestCase):
             self.assertTrue(channel["recording_query_ok"])
             self.assertEqual(channel["recording_recent"], False)
             self.assertIsNone(channel["last_recording"])
+            self.assertEqual(channel["recording_files_24h"], 42)
+            self.assertEqual(channel["recording_coverage_24h"], 97.5)
+            self.assertEqual(channel["daily_online_rate"], 0.0)
+            self.assertEqual(channel["nvr_live_video_disconnect_count_24h"], 0)
 
     def test_get_channel_not_found(self) -> None:
         resp = self.client.get("/api/v1/channels/99")

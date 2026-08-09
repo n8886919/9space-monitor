@@ -34,9 +34,9 @@ class M3SourceContractTests(unittest.TestCase):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
         self.assertNotIn("icmplib", " ".join(manifest.get("requirements", [])))
 
-    def test_manifest_version_is_0_2_4(self):
+    def test_manifest_version_is_0_2_5(self):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
-        self.assertEqual("0.2.4", manifest.get("version"))
+        self.assertEqual("0.2.5", manifest.get("version"))
 
     def test_snapshot_camera_platform_and_client_are_removed(self):
         const = (INTEGRATION / "const.py").read_text()
@@ -55,6 +55,17 @@ class M3SourceContractTests(unittest.TestCase):
         self.assertIn("by_channel[camera.channel]", coordinator)
         self.assertNotIn("camera.channel +", coordinator)
         self.assertNotIn("camera.channel -", coordinator)
+
+    def test_recording_and_live_aggregate_sensor_identities_are_preserved(self):
+        sensor = (INTEGRATION / "sensor.py").read_text()
+        for key in (
+            "daily_online_rate",
+            "nvr_live_video_disconnect_count_24h",
+            "recording_count_24h",
+            "recording_coverage_24h",
+        ):
+            with self.subTest(key=key):
+                self.assertEqual(1, sensor.count(f'\n        key="{key}",'))
 
     def test_telemetry_scheduler_stops_only_after_successful_platform_unload(self):
         init = (INTEGRATION / "__init__.py").read_text()

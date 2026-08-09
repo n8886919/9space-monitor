@@ -31,6 +31,10 @@ class AddonChannel:
     recording_query_ok: bool
     recording_recent: bool | None
     last_recording: str | None
+    recording_files_24h: int | None
+    recording_coverage_24h: float | None
+    daily_online_rate: float | None
+    nvr_live_video_disconnect_count_24h: int | None
     checked_at: str | None
     error_code: str | None
 
@@ -72,7 +76,33 @@ class AddonChannel:
                     ) from None
                 if parsed.tzinfo is None:
                     raise AddonInvalidResponse("invalid_channel_contract")
-        return cls(**{key: value[key] for key in required})
+        recording_files = value.get("recording_files_24h")
+        disconnects = value.get("nvr_live_video_disconnect_count_24h")
+        for metric in (recording_files, disconnects):
+            if metric is not None and (
+                type(metric) is not int or not 0 <= metric <= 10_000_000
+            ):
+                raise AddonInvalidResponse("invalid_channel_contract")
+        coverage = value.get("recording_coverage_24h")
+        online_rate = value.get("daily_online_rate")
+        for metric in (coverage, online_rate):
+            if metric is not None and (
+                type(metric) not in {int, float} or not 0 <= float(metric) <= 100
+            ):
+                raise AddonInvalidResponse("invalid_channel_contract")
+        return cls(
+            channel_id=channel_id,
+            live_video=value["live_video"],
+            recording_query_ok=value["recording_query_ok"],
+            recording_recent=value["recording_recent"],
+            last_recording=value["last_recording"],
+            recording_files_24h=recording_files,
+            recording_coverage_24h=float(coverage) if coverage is not None else None,
+            daily_online_rate=float(online_rate) if online_rate is not None else None,
+            nvr_live_video_disconnect_count_24h=disconnects,
+            checked_at=value["checked_at"],
+            error_code=value["error_code"],
+        )
 
     def as_dict(self) -> dict[str, Any]:
         """Return the entity-facing representation."""
@@ -82,6 +112,12 @@ class AddonChannel:
             "recording_query_ok": self.recording_query_ok,
             "recording_recent": self.recording_recent,
             "last_recording": self.last_recording,
+            "recording_files_24h": self.recording_files_24h,
+            "recording_coverage_24h": self.recording_coverage_24h,
+            "daily_online_rate": self.daily_online_rate,
+            "nvr_live_video_disconnect_count_24h": (
+                self.nvr_live_video_disconnect_count_24h
+            ),
             "checked_at": self.checked_at,
             "nvr_error": self.error_code or "",
             "recording_error": (

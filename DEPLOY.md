@@ -19,11 +19,11 @@
 
 - `8122` 是獨立舊正式服務，永久禁止操作。
 - 不得對 `8122` 執行 test、restart、rebuild、reload、modify，亦不得把 `8122` 當成 integration URL。
-- 本 repository 的 monorepo add-on 版本為 `0.3.5`，host port 是 `8222`，container port 是 `8000`。
+- 本 repository 的 monorepo add-on 版本為 `0.3.7`，host port 是 `8222`，container port 是 `8000`。
 - Snapshot add-on 只能由 HA 已設定的 Supervisor managed repository 安裝與更新；不得以 tar／scp 寫入 local `/addons`，也不得把 local source 當更新失敗時的替代路徑。
 - Center 是獨立 container service，依 `center/README.md` 從 Git checkout 部署；它不是 HA add-on，不得安裝到 HA local `/addons`。
 - Supervisor add-on identifier／slug 與 internal hostname 不可混用。
-- 唯讀 version gate 只有在 Supervisor 已安裝 add-on 是 `0.3.5` 時才通過；不得因舊版 endpoint 可用就跳過必要的 repository update。
+- 唯讀 version gate 只有在 Supervisor 已安裝 add-on 是 `0.3.7` 時才通過；不得因舊版 endpoint 可用就跳過必要的 repository update。
 - 若任務已要求部署，add-on 的 managed update 或 integration 的 scoped upload、restart 與 verify 可依本文件連續完成；操作 `8122`、`.storage`、destructive rollback、schema／auth 或 public exposure 仍須另行明確確認。
 - 不得直接編輯 `/config/.storage/core.config_entries` 或其他 `.storage` 檔案。
 - 不得自動建立或接受帶有 `_2` 後綴的 replacement entities。
@@ -44,7 +44,7 @@ export INTEGRATION_DOMAIN="nvr_monitor"
 export INTEGRATION_REMOTE_DIR="/config/custom_components/${INTEGRATION_DOMAIN}"
 
 export ADDON_SLUG="<actual-supervisor-addon-slug>"
-export ADDON_TARGET_VERSION="0.3.5"
+export ADDON_TARGET_VERSION="0.3.7"
 export ADDON_HOSTNAME="afa94ae2-9space-snapshot-addon"
 export ADDON_HOST_PORT="8222"
 export ADDON_CONTAINER_PORT="8000"
@@ -106,9 +106,9 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 
 Snapshot API smoke test 是 add-on API 與未來 Center/server 的 contract 驗證；integration 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
 
-只有 Supervisor 已安裝版本明確為 `0.3.5`，且以下唯讀檢查都正常時，才可跳過 add-on repository update：
+只有 Supervisor 已安裝版本明確為 `0.3.7`，且以下唯讀檢查都正常時，才可跳過 add-on repository update：
 
-- `ha apps info "$ADDON_SLUG"` 顯示 version `0.3.5`
+- `ha apps info "$ADDON_SLUG"` 顯示 version `0.3.7`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/healthz`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/camera/1`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/v1/channels`
@@ -345,9 +345,9 @@ filter_logs_after_marker() {
 
 ### 1. 上傳 integration
 
-Local-only Ping correction 的 rollout 必須先部署 integration `0.2.4`，確認舊
-`ha.ping` mapping 已被 local filter 排除，再部署拒收 `ha.ping` 的 Center code。
-不得反向部署，以免舊 integration 的 mixed batch 被 Center 整批拒絕。
+Recording/live aggregates rollout 必須先更新 Snapshot add-on `0.3.7`，確認新 API
+欄位可讀，再部署 integration `0.2.5`。Center 不參與這些 local-only metrics，
+不需部署或修改。
 
 ```bash
 tar -C custom_components -czf /tmp/nvr_monitor.tgz nvr_monitor
@@ -363,7 +363,7 @@ scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh \
 
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
-EXPECTED_VERSION="0.2.4"
+EXPECTED_VERSION="0.2.5"
 CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
 mkdir -p /config/9space_deploy
 ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nvr-monitor.XXXXXX)

@@ -6,7 +6,8 @@ Updated: 2026-08-09
 
 - Branch: `agent/m5e-center-observability`
 - Functional release commit: `69f28e6`.
-- Local code versions: add-on `0.3.5`; integration `0.2.4`.
+- Local release candidate versions: add-on `0.3.7`; integration `0.2.5`.
+- Recording/live aggregate correction 已完成本機實作，尚待 push 與承德部署：有效片段數、24 小時錄影覆蓋率、日在線率與在線轉非在線斷線次數均由 Snapshot add-on 提供，history 僅保留 bounded RAM，不送 Center。
 - M5E v0.3.5 已部署至承德並完成使用者接受的 35 分鐘 observation。
 - Local correction 將 Ping (ICMP)／RTT／packet loss 保留在 Home Assistant：integration 不再送 `ha.ping`，Center 不再接受或顯示 Ping，dashboard renderer 改產生 local current／rolling 1h／rolling 24h cards；functional release `69f28e6` 已 push，尚未部署。
 - Deployment contract 已改為 Snapshot add-on 僅走既有 Supervisor managed Git repository；禁止 HA local `/addons` source install。Center 維持獨立 Git checkout／container deployment，不是 HA add-on。
@@ -25,7 +26,7 @@ Updated: 2026-08-09
 
 1. 以 live entity registry 確認各 camera 的原生 Ping binary sensor、RTT average 與 packet-loss entity IDs；RTT／loss 預設停用時由使用者在 HA UI 啟用。
 2. 由使用者在指定 HA dashboard view 的 UI code editor 套用 renderer 產生的 NVR + local Ping cards；不得以 API 或直接編輯 `.storage` 代替。
-3. 若部署本次 Ping correction，順序必須是 integration 0.2.4 先、Center 後；完成 `ha core check`、identity、log 與 Ping 不出站驗證。未來 Snapshot add-on 更新一律走 Supervisor managed repository。
+3. 部署 recording/live aggregate correction 時，先由 Supervisor managed repository 更新 add-on `0.3.7`，確認 API 後再部署 integration `0.2.5`；完成 `ha core check`、identity 與 log 驗證。Center 不需變更。
 4. 既有 Center `ha.ping` rows 可依七日 retention 自然淘汰；若要求立即刪除，需另做精確 destructive data approval。
 
 ## Blockers

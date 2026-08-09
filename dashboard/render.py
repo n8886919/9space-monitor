@@ -140,6 +140,8 @@ def _lovelace_view_lines(mapping: dict[str, Any]) -> list[str]:
     diagnostic_rows = [(_METRIC_LABELS[item["metric"]], item["entity_id"]) for item in mapping["diagnostics"]]
     groups = [("NVR / Recording", nvr_rows), ("Ping / Network", ping_rows), ("Diagnostics", diagnostic_rows)]
     for title, entities in groups:
+        if not entities:
+            continue
         lines += ["  - type: entities", "    title: " + quote(title), "    entities:"]
         for label, entity_id in entities:
             lines += ["      - entity: " + quote(entity_id), "        name: " + quote(label or entity_id)]

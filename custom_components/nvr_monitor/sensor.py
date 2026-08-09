@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.components.sensor import (
+    SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
-    SensorDeviceClass,
+    SensorStateClass,
 )
 from homeassistant.config_entries import ConfigSubentry
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory, PERCENTAGE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
@@ -57,6 +58,36 @@ SERVICE_SENSORS = (
 )
 
 ADDON_SENSORS = (
+    CameraSensorDescription(
+        key="daily_online_rate",
+        translation_key="daily_online_rate",
+        source="addon",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.get("daily_online_rate"),
+    ),
+    CameraSensorDescription(
+        key="nvr_live_video_disconnect_count_24h",
+        translation_key="nvr_live_video_disconnect_count_24h",
+        source="addon",
+        native_unit_of_measurement="times",
+        value_fn=lambda data: data.get("nvr_live_video_disconnect_count_24h"),
+    ),
+    CameraSensorDescription(
+        key="recording_count_24h",
+        translation_key="recording_count_24h",
+        source="addon",
+        native_unit_of_measurement="files",
+        value_fn=lambda data: data.get("recording_files_24h"),
+    ),
+    CameraSensorDescription(
+        key="recording_coverage_24h",
+        translation_key="recording_coverage_24h",
+        source="addon",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.get("recording_coverage_24h"),
+    ),
     CameraSensorDescription(
         key="last_recording",
         translation_key="last_recording",

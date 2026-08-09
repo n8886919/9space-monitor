@@ -93,11 +93,21 @@ Response：
     "recording_query_ok": true,
     "recording_recent": true,
     "last_recording": "2026-08-01T21:30:00+08:00",
+    "recording_files_24h": 42,
+    "recording_coverage_24h": 97.5,
+    "daily_online_rate": 92.5,
+    "nvr_live_video_disconnect_count_24h": 3,
     "checked_at": "2026-08-01T21:31:00+08:00",
     "error_code": null
   }
 ]
 ```
+
+`recording_files_24h` 是最近一次成功錄影查詢中的有效片段數；
+`recording_coverage_24h` 是有效片段在過去 24 小時覆蓋的時間比例。
+兩者在錄影查詢失敗或尚無成功結果時為 `null`。`daily_online_rate` 與
+`nvr_live_video_disconnect_count_24h` 只使用 add-on 內的 bounded 24 小時 RAM
+samples；斷線只計已在線後轉為非在線狀態，不把首次觀察為離線算成斷線。
 
 ### `GET /api/v1/channels/{channel_id}`
 

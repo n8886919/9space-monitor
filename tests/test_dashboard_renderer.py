@@ -51,6 +51,14 @@ class DashboardRendererTests(unittest.TestCase):
         self.assertNotIn("\nviews:", view_yaml)
         self.assertIn("type: statistic", view_yaml)
 
+    def test_empty_diagnostics_does_not_render_empty_card(self) -> None:
+        mapping = sample()
+        mapping["diagnostics"] = []
+        yaml = lovelace_view_yaml(mapping)
+        self.assertNotIn('title: "Diagnostics"', yaml)
+        self.assertIn('title: "NVR / Recording"', yaml)
+        self.assertIn('title: "Ping / Network"', yaml)
+
     def test_rejects_duplicate_unsafe_and_snapshot_input_without_echo(self) -> None:
         cases = []
         duplicate = sample()
