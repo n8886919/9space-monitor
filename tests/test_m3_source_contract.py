@@ -34,9 +34,10 @@ class M3SourceContractTests(unittest.TestCase):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
         self.assertNotIn("icmplib", " ".join(manifest.get("requirements", [])))
 
-    def test_manifest_version_is_0_2_6(self):
+    def test_manifest_version_is_0_2_7(self):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
-        self.assertEqual("0.2.6", manifest.get("version"))
+        self.assertEqual("0.2.7", manifest.get("version"))
+        self.assertIn("recorder", manifest.get("after_dependencies", []))
 
     def test_snapshot_camera_platform_and_client_are_removed(self):
         const = (INTEGRATION / "const.py").read_text()
@@ -74,6 +75,11 @@ class M3SourceContractTests(unittest.TestCase):
         addon_telemetry = (ROOT / "9space_snapshot_api/telemetry.py").read_text()
         self.assertIn("LiveHistoryStore", coordinator)
         self.assertIn("LIVE_WINDOW_MS", history)
+        integration = (INTEGRATION / "__init__.py").read_text()
+        recorder_history = (INTEGRATION / "recorder_history.py").read_text()
+        self.assertIn("async_restore_live_history", integration)
+        self.assertIn("history.get_significant_states", recorder_history)
+        self.assertIn("async_add_executor_job", recorder_history)
         self.assertNotIn("_live_samples", addon_state)
         self.assertNotIn("_live_samples", addon_telemetry)
         self.assertNotIn("disconnect_count_24h", addon_telemetry)

@@ -345,10 +345,10 @@ filter_logs_after_marker() {
 
 ### 1. 上傳 integration
 
-Live-history ownership rollout 必須先部署 integration `0.2.6`；它會在舊 add-on
-`0.3.7` 期間沿用 API aggregates。確認 integration 正常後才更新 Snapshot add-on
-`0.3.8`，由 `live_checked_at` 切換至 integration-owned 24 小時 RAM ring。舊 add-on
-RAM history 直接捨棄、不 migration；Center 不接收在線率或斷線次數。
+Snapshot add-on `0.3.8` 需要 integration `0.2.6` 或更新版本，才能由
+`live_checked_at` 維護 integration-owned 24 小時 RAM ring。Integration `0.2.7`
+在啟動時透過 Recorder 的 read-only executor API 重建最近 24 小時 window；不建立
+第二份磁碟 history，add-on 與 Center 仍不接收在線率或斷線次數。
 
 ```bash
 tar -C custom_components -czf /tmp/nvr_monitor.tgz nvr_monitor
@@ -364,7 +364,7 @@ scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh \
 
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
-EXPECTED_VERSION="0.2.6"
+EXPECTED_VERSION="0.2.7"
 CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
 mkdir -p /config/9space_deploy
 ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nvr-monitor.XXXXXX)

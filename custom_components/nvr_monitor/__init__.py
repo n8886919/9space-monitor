@@ -19,7 +19,9 @@ from .api import CameraProbeClient
 from .const import CONF_ADDON_BASE_URL, DOMAIN, HA_TELEMETRY_INTERVAL, PLATFORMS
 from .coordinator import AddonCoordinator, CameraServiceCoordinator
 from .events import CameraEventTracker
+from .live_history import LiveHistoryStore
 from .models import cameras_from_entry
+from .recorder_history import async_restore_live_history
 from .ha_telemetry import (
     AiohttpCenterClient,
     HATelemetryProducer,
@@ -53,7 +55,9 @@ async def async_setup_entry(
 
     cameras = cameras_from_entry(entry)
     addon_client = AddonApiClient(base_url, async_get_clientsession(hass))
-    addon = AddonCoordinator(hass, entry, addon_client, cameras)
+    live_history = LiveHistoryStore()
+    await async_restore_live_history(hass, entry, cameras, live_history)
+    addon = AddonCoordinator(hass, entry, addon_client, cameras, live_history)
     service = CameraServiceCoordinator(hass, entry, CameraProbeClient(), cameras)
     events = CameraEventTracker(hass, entry, cameras)
     telemetry = build_producer(entry.data, AiohttpCenterClient(async_get_clientsession(hass)))

@@ -27,6 +27,7 @@ class AddonCoordinator(DataUpdateCoordinator[ProbeResults]):
         entry: ConfigEntry,
         client: AddonApiClient,
         cameras: list[CameraConfig],
+        live_history: LiveHistoryStore | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -37,7 +38,7 @@ class AddonCoordinator(DataUpdateCoordinator[ProbeResults]):
         )
         self.client = client
         self.cameras = cameras
-        self.live_history = LiveHistoryStore()
+        self.live_history = live_history or LiveHistoryStore()
 
     async def _async_update_data(self) -> ProbeResults:
         try:

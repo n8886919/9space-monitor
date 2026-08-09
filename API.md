@@ -107,7 +107,9 @@ Response：
 兩者在錄影查詢失敗或尚無成功結果時為 `null`。`daily_online_rate` 與
 `nvr_live_video_disconnect_count_24h` 不由 add-on API 提供；integration 使用
 `live_video` 與 `live_checked_at` 在本機 bounded RAM 計算，並由 Home Assistant
-Recorder 作為唯一持久化歷史。舊 add-on RAM history 不 migration。
+Recorder 作為唯一持久化歷史。Integration 啟動時唯讀載入 Recorder 中最近
+24 小時的 `nvr_live_video` 狀態變化來重建 RAM window，再接續 add-on 的最新
+probe；不建立第二份磁碟 history。舊 add-on RAM history 不 migration。
 
 ### `GET /api/v1/channels/{channel_id}`
 

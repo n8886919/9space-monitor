@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
 
 
@@ -65,7 +66,48 @@ class LiveHistoryStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(0, result["nvr_live_video_disconnect_count_24h"])
-        self.assertEqual(100.0, result["daily_online_rate"])
+        self.assertEqual(0.0, result["daily_online_rate"])
+
+    def test_restore_rebuilds_time_weighted_window_and_disconnects(self) -> None:
+        store = live_history.LiveHistoryStore()
+        result = store.restore(
+            "camera-1",
+            [
+                (0, True),
+                (12 * HOUR_MS, False),
+            ],
+            now_ms=24 * HOUR_MS,
+        )
+
+        self.assertEqual(1, result["nvr_live_video_disconnect_count_24h"])
+        self.assertEqual(50.0, result["daily_online_rate"])
+
+    def test_restore_deduplicates_timestamps_and_observe_continues(self) -> None:
+        store = live_history.LiveHistoryStore()
+        store.restore(
+            "camera-1",
+            [(1000, True), (2000, True), (2000, False)],
+            now_ms=3000,
+        )
+        result = store.observe(
+            "camera-1", checked_at_ms=4000, live_video=True, now_ms=5000
+        )
+
+        self.assertEqual(1, result["nvr_live_video_disconnect_count_24h"])
+        self.assertEqual(50.0, result["daily_online_rate"])
+
+    def test_recorder_samples_ignore_non_probe_availability_states(self) -> None:
+        states = [
+            SimpleNamespace(state="on", last_updated_timestamp=1.0),
+            SimpleNamespace(state="unavailable", last_updated_timestamp=2.0),
+            SimpleNamespace(state="off", last_updated_timestamp=3.0),
+            SimpleNamespace(state="unknown", last_updated_timestamp=4.0),
+        ]
+
+        self.assertEqual(
+            [(1000, True), (3000, False)],
+            live_history.samples_from_recorder_states(states),
+        )
 
     def test_clear_drops_old_data_without_migration(self) -> None:
         store = live_history.LiveHistoryStore()
