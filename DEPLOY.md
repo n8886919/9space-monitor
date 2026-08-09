@@ -108,8 +108,10 @@ Hub add-on 由同一 Supervisor managed repository 的 `nine_space_monitor_hub/`
 提供。先 push default branch，再由使用者在 App store 刷新既有 repository 並安裝
 `9space_monitor_hub`；不得用 SSH 複製到 local `/addons`。
 
-Hub options 必須在 Supervisor UI 明列每站 `site_id`、display name、private add-on
-base URL、channels 與 bounded scheduler 參數。真實 URL 不提交 Git。安裝後以
+Hub options 只保留全域 freshness 與 snapshot store 限制。每站 `site_id`、display
+name、channel count、Tailscale Snapshot API origin 與 refresh interval 設在站點
+Snapshot add-on；concurrency 與 timeout 沿用既有 `max_concurrency`／
+`health_timeout_ms`。真實 URL 不提交 Git。安裝後以
 `ha apps info <actual_slug>` 確認實際 slug 與 internal hostname，再把
 `custom_components/nine_space_monitor_hub/` 以 scoped transaction 安裝到中央 HA。
 
