@@ -27,16 +27,16 @@ Updated: 2026-08-09
 
 1. 以 live entity registry 確認各 camera 的原生 Ping binary sensor、RTT average 與 packet-loss entity IDs；RTT／loss 預設停用時由使用者在 HA UI 啟用。
 2. 由使用者在指定 HA dashboard view 的 UI code editor 套用 renderer 產生的 NVR + local Ping cards；不得以 API 或直接編輯 `.storage` 代替。
-3. 使用者在 HA UI 套用精美 Markdown card 並確認片段數、覆蓋率、日在線率與斷線次數顯示；確認後清除本次 integration transaction。Center 不需變更。
+3. Recording/live aggregate correction 已完成 UI runtime 驗收，本次 integration transaction 已清除。Center 不需變更。
 4. 既有 Center `ha.ping` rows 可依七日 retention 自然淘汰；若要求立即刪除，需另做精確 destructive data approval。
 
 ## Blockers
 
-Dashboard UI 尚待使用者貼入 card YAML；AI 未修改 `.storage`，因此無法宣稱指定 view 已更新或 UI 顯示已驗收。
+目前沒有 recording/live aggregate correction blocker；使用者已確認片段數、覆蓋率與斷線次數顯示正常。
 
 ## Temporary / last-known
 
 - `8122` 是獨立舊正式服務，不在 M5E 操作範圍。
 - 使用者於 35 分鐘時明確接受停止 observation；未完成原先規劃的一小時，不得改寫成一小時 PASS。
-- Integration deployment transaction 暫時保留，待使用者確認 UI runtime 後清除。
+- Integration `0.2.5` 本次 deployment transaction 已在 UI runtime 驗收後清除。
 - 不在此文件保存 host、URL、credentials、backup path 或 JPEG／footage。
