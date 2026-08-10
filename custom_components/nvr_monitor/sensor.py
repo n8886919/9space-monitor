@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -14,14 +14,13 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigSubentry
-from homeassistant.const import EntityCategory, PERCENTAGE
+from homeassistant.const import EntityCategory, PERCENTAGE, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
 from . import NvrMonitorConfigEntry
-from .entity import CameraMonitorEntity, camera_device_info
-from .events import CameraEventTracker
+from .entity import CameraMonitorEntity
 from .models import CameraConfig, cameras_from_entry
 
 
@@ -59,6 +58,24 @@ SERVICE_SENSORS = (
 
 ADDON_SENSORS = (
     CameraSensorDescription(
+        key="nvr_first_packet",
+        translation_key="nvr_first_packet",
+        source="addon",
+        native_unit_of_measurement="ms",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda data: data.get("nvr_first_packet_ms"),
+    ),
+    CameraSensorDescription(
+        key="nvr_probe_duration",
+        translation_key="nvr_probe_duration",
+        source="addon",
+        native_unit_of_measurement="ms",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda data: data.get("nvr_probe_duration_ms"),
+    ),
+    CameraSensorDescription(
         key="daily_online_rate",
         translation_key="daily_online_rate",
         source="addon",
@@ -89,6 +106,31 @@ ADDON_SENSORS = (
         value_fn=lambda data: data.get("recording_coverage_24h"),
     ),
     CameraSensorDescription(
+        key="recording_gap_count_24h",
+        translation_key="recording_gap_count_24h",
+        source="addon",
+        native_unit_of_measurement="gaps",
+        value_fn=lambda data: data.get("recording_gap_count_24h"),
+    ),
+    CameraSensorDescription(
+        key="recording_gap_total_24h",
+        translation_key="recording_gap_total_24h",
+        source="addon",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.get("recording_gap_total_seconds_24h"),
+    ),
+    CameraSensorDescription(
+        key="largest_recording_gap_24h",
+        translation_key="largest_recording_gap_24h",
+        source="addon",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.get("largest_recording_gap_seconds_24h"),
+    ),
+    CameraSensorDescription(
         key="last_recording",
         translation_key="last_recording",
         source="addon",
@@ -102,25 +144,6 @@ ADDON_SENSORS = (
 )
 
 SENSORS = SERVICE_SENSORS + ADDON_SENSORS
-
-EVENT_SENSORS = (
-    SensorEntityDescription(
-        key="motion_count_24h",
-        translation_key="motion_count_24h",
-        native_unit_of_measurement="events",
-    ),
-    SensorEntityDescription(
-        key="last_motion",
-        translation_key="last_motion",
-        device_class=SensorDeviceClass.TIMESTAMP,
-    ),
-    SensorEntityDescription(
-        key="last_dahua_event",
-        translation_key="last_dahua_event",
-        entity_category=EntityCategory.DIAGNOSTIC,
-    ),
-)
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -138,10 +161,6 @@ async def async_setup_entry(
             [
                 CameraMonitorSensor(entry, subentry, camera, description)
                 for description in SENSORS
-            ]
-            + [
-                CameraEventSensor(entry, subentry, camera, description)
-                for description in EVENT_SENSORS
             ],
             config_subentry_id=subentry_id,
         )
@@ -211,63 +230,3 @@ class CameraMonitorSensor(CameraMonitorEntity, SensorEntity):
                 }
             )
         return attributes
-
-
-class CameraEventSensor(SensorEntity):
-    """A sensor derived from retained Dahua events."""
-
-    _attr_has_entity_name = True
-
-    def __init__(
-        self,
-        entry: NvrMonitorConfigEntry,
-        subentry: ConfigSubentry,
-        camera: CameraConfig,
-        description: SensorEntityDescription,
-    ) -> None:
-        self.entry = entry
-        self.camera = camera
-        self.tracker: CameraEventTracker = entry.runtime_data.events
-        self.entity_description = description
-        self._attr_unique_id = (
-            f"{entry.entry_id}_{subentry.subentry_id}_{description.key}"
-        )
-        self._attr_device_info = camera_device_info(entry, subentry, camera)
-
-    async def async_added_to_hass(self) -> None:
-        """Subscribe to new Dahua events."""
-        self.async_on_remove(
-            self.tracker.async_add_listener(self.async_write_ha_state)
-        )
-
-    @property
-    def native_value(self) -> StateType:
-        """Return the derived event value."""
-        key = self.entity_description.key
-        if key == "motion_count_24h":
-            return self.tracker.count_starts_24h(
-                self.camera.channel, "VideoMotion"
-            )
-        if key == "last_motion":
-            event = self.tracker.last_event(
-                self.camera.channel, "VideoMotion"
-            )
-            return (
-                datetime.fromtimestamp(float(event["ts"]), timezone.utc)
-                if event
-                else None
-            )
-        event = self.tracker.last_event(self.camera.channel)
-        return str(event["code"]) if event else None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return camera mapping and last event details."""
-        event = self.tracker.last_event(self.camera.channel) or {}
-        return {
-            "ip": self.camera.ip,
-            "nvr_channel": self.camera.channel,
-            "group": self.camera.group,
-            "last_event_action": event.get("action"),
-            "last_event_timestamp": event.get("ts"),
-        }

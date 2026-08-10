@@ -17,8 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NvrMonitorConfigEntry
-from .entity import CameraMonitorEntity, camera_device_info
-from .events import CameraEventTracker
+from .entity import CameraMonitorEntity
 from .models import CameraConfig, cameras_from_entry
 
 
@@ -90,31 +89,6 @@ BINARY_SENSORS = (
     ),
 )
 
-EVENT_BINARY_SENSORS = (
-    BinarySensorEntityDescription(
-        key="motion_active",
-        translation_key="motion_active",
-        device_class=BinarySensorDeviceClass.MOTION,
-    ),
-    BinarySensorEntityDescription(
-        key="video_loss",
-        translation_key="video_loss",
-        device_class=BinarySensorDeviceClass.PROBLEM,
-    ),
-    BinarySensorEntityDescription(
-        key="video_blind",
-        translation_key="video_blind",
-        device_class=BinarySensorDeviceClass.PROBLEM,
-    ),
-)
-
-EVENT_CODE_BY_KEY = {
-    "motion_active": "VideoMotion",
-    "video_loss": "VideoLoss",
-    "video_blind": "VideoBlind",
-}
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: NvrMonitorConfigEntry,
@@ -131,10 +105,6 @@ async def async_setup_entry(
             [
                 CameraMonitorBinarySensor(entry, subentry, camera, description)
                 for description in BINARY_SENSORS
-            ]
-            + [
-                CameraEventBinarySensor(entry, subentry, camera, description)
-                for description in EVENT_BINARY_SENSORS
             ],
             config_subentry_id=subentry_id,
         )
@@ -212,51 +182,3 @@ class CameraMonitorBinarySensor(CameraMonitorEntity, BinarySensorEntity):
                 }
             )
         return attributes
-
-
-class CameraEventBinarySensor(BinarySensorEntity):
-    """A binary sensor driven by the Dahua event stream."""
-
-    _attr_has_entity_name = True
-
-    def __init__(
-        self,
-        entry: NvrMonitorConfigEntry,
-        subentry: ConfigSubentry,
-        camera: CameraConfig,
-        description: BinarySensorEntityDescription,
-    ) -> None:
-        self.entry = entry
-        self.camera = camera
-        self.tracker: CameraEventTracker = entry.runtime_data.events
-        self.entity_description = description
-        self._attr_unique_id = (
-            f"{entry.entry_id}_{subentry.subentry_id}_{description.key}"
-        )
-        self._attr_device_info = camera_device_info(entry, subentry, camera)
-
-    async def async_added_to_hass(self) -> None:
-        """Subscribe to new Dahua events."""
-        self.async_on_remove(
-            self.tracker.async_add_listener(self.async_write_ha_state)
-        )
-
-    @property
-    def is_on(self) -> bool:
-        """Return the latest event activation state."""
-        return self.tracker.is_active(
-            self.camera.channel, EVENT_CODE_BY_KEY[self.entity_description.key]
-        )
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return camera mapping and the last matching event."""
-        code = EVENT_CODE_BY_KEY[self.entity_description.key]
-        last_event = self.tracker.last_event(self.camera.channel, code) or {}
-        return {
-            "ip": self.camera.ip,
-            "nvr_channel": self.camera.channel,
-            "group": self.camera.group,
-            "last_action": last_event.get("action"),
-            "last_event_timestamp": last_event.get("ts"),
-        }

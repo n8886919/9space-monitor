@@ -19,12 +19,12 @@
 
 - `8122` 是獨立舊正式服務，永久禁止操作。
 - 不得對 `8122` 執行 test、restart、rebuild、reload、modify，亦不得把 `8122` 當成 integration URL。
-- 本 repository 的 monorepo add-on 版本為 `0.3.11`，host port 是 `8222`，container port 是 `8000`。
+- 本 repository 的 monorepo add-on 版本為 `0.3.12`，host port 是 `8222`，container port 是 `8000`。
 - NVR RTSP／HTTP ports 固定為 `554`／`80`，不再出現在 add-on options；升級後殘留的舊 keys 由 runtime 忽略。
 - Snapshot add-on 只能由 HA 已設定的 Supervisor managed repository 安裝與更新；不得以 tar／scp 寫入 local `/addons`，也不得把 local source 當更新失敗時的替代路徑。
 - 舊 Center 已由 `nine_space_monitor_hub/` Supervisor add-on 取代；Hub 不使用 SQLite 保存狀態歷史，歷史由中央 HA Recorder 保存。
 - Supervisor add-on identifier／slug 與 internal hostname 不可混用。
-- 唯讀 version gate 只有在 Supervisor 已安裝 add-on 是 `0.3.11` 時才通過；不得因舊版 endpoint 可用就跳過必要的 repository update。
+- 唯讀 version gate 只有在 Supervisor 已安裝 add-on 是 `0.3.12` 時才通過；不得因舊版 endpoint 可用就跳過必要的 repository update。
 - 若任務已要求部署，add-on 的 managed update 或 integration 的 scoped upload、restart 與 verify 可依本文件連續完成；操作 `8122`、`.storage`、destructive rollback、schema／auth 或 public exposure 仍須另行明確確認。
 - 不得直接編輯 `/config/.storage/core.config_entries` 或其他 `.storage` 檔案。
 - 不得自動建立或接受帶有 `_2` 後綴的 replacement entities。
@@ -45,7 +45,7 @@ export INTEGRATION_DOMAIN="nvr_monitor"
 export INTEGRATION_REMOTE_DIR="/config/custom_components/${INTEGRATION_DOMAIN}"
 
 export ADDON_SLUG="<actual-supervisor-addon-slug>"
-export ADDON_TARGET_VERSION="0.3.11"
+export ADDON_TARGET_VERSION="0.3.12"
 export ADDON_HOSTNAME="afa94ae2-9space-snapshot-addon"
 export ADDON_HOST_PORT="8222"
 export ADDON_CONTAINER_PORT="8000"
@@ -134,9 +134,9 @@ Recorder 是狀態歷史唯一持有者。
 
 Snapshot API smoke test 是 local add-on 與 Hub 的 contract 驗證；`nvr_monitor` 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
 
-只有 Supervisor 已安裝版本明確為 `0.3.11`，且以下唯讀檢查都正常時，才可跳過 add-on repository update：
+只有 Supervisor 已安裝版本明確為 `0.3.12`，且以下唯讀檢查都正常時，才可跳過 add-on repository update：
 
-- `ha apps info "$ADDON_SLUG"` 顯示 version `0.3.11`
+- `ha apps info "$ADDON_SLUG"` 顯示 version `0.3.12`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/healthz`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/camera/1`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/v1/channels`
@@ -373,8 +373,8 @@ filter_logs_after_marker() {
 
 ### 1. 上傳 integration
 
-Snapshot add-on `0.3.11` 需要 integration `0.2.6` 或更新版本，才能由
-`live_checked_at` 維護 integration-owned 24 小時 RAM ring。Integration `0.2.8`
+Snapshot add-on `0.3.12` 需要 integration `0.2.9` 或更新版本，才能讀取錄影缺口與
+RTSP timing diagnostics；`live_checked_at` 仍由 integration-owned 24 小時 RAM ring 使用。Integration `0.2.9`
 在啟動時透過 Recorder 的 read-only executor API 重建最近 24 小時 window；不建立
 第二份磁碟 history，add-on 與 Hub 仍不接收在線率或斷線次數。Integration runtime
 固定使用 Supervisor internal URL `http://afa94ae2-9space-snapshot-addon:8000`，config
@@ -394,7 +394,7 @@ scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh \
 
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
-EXPECTED_VERSION="0.2.8"
+EXPECTED_VERSION="0.2.9"
 CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
 mkdir -p /config/9space_deploy
 ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nvr-monitor.XXXXXX)
@@ -590,7 +590,7 @@ REMOTE_SCRIPT
 
 Rollback 使用相同 helper；還原 integration source 後必須先通過 `ha core check` 才能重新啟動 Core。驗證完成後，以前述相同 path gate 清除原 deployment 與 rollback transaction，不在 `custom_components` 留 artifact。
 
-舊 entry data 若仍含 `addon_base_url`，0.2.8 runtime 會忽略它；不得直接覆寫或編輯
+舊 entry data 若仍含 `addon_base_url`，0.2.9 runtime 會忽略它；不得直接覆寫或編輯
 `.storage`。使用者日後經 UI Reconfigure 儲存時，該舊 key 會自然移除，entity identity
 不變。
 

@@ -96,6 +96,11 @@ Response：
     "last_recording": "2026-08-01T21:30:00+08:00",
     "recording_files_24h": 42,
     "recording_coverage_24h": 97.5,
+    "recording_gap_count_24h": 3,
+    "recording_gap_total_seconds_24h": 120.5,
+    "largest_recording_gap_seconds_24h": 60.25,
+    "nvr_first_packet_ms": 250.5,
+    "nvr_probe_duration_ms": 3250.75,
     "checked_at": "2026-08-01T21:31:00+08:00",
     "error_code": null
   }
@@ -103,8 +108,12 @@ Response：
 ```
 
 `recording_files_24h` 是最近一次成功錄影查詢中的有效片段數；
-`recording_coverage_24h` 是有效片段在過去 24 小時覆蓋的時間比例。
-兩者在錄影查詢失敗或尚無成功結果時為 `null`。`daily_online_rate` 與
+`recording_coverage_24h` 是有效片段在過去 24 小時覆蓋的時間比例；三個
+`recording_gap_*` 欄位分別是缺口數、缺口總秒數與最大缺口秒數。
+`nvr_first_packet_ms` 是 PLAY 後等待首個有效 RTP 封包的時間，
+`nvr_probe_duration_ms` 是整次探測耗時。錄影欄位在查詢失敗或尚無成功結果時為
+`null`；首包時間在沒有收到有效 RTP 封包時為 `null`。以上是 additive optional
+欄位，舊 client 可忽略。`daily_online_rate` 與
 `nvr_live_video_disconnect_count_24h` 不由 add-on API 提供；integration 使用
 `live_video` 與 `live_checked_at` 在本機 bounded RAM 計算，並由 Home Assistant
 Recorder 作為唯一持久化歷史。Integration 啟動時唯讀載入 Recorder 中最近

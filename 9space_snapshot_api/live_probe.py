@@ -7,7 +7,7 @@ detection algorithm as the integration used to run itself (per AGENTS.md:
 
 - Operates on a plain ``channel_id: int`` instead of a ``CameraConfig``
   subentry, since the add-on has no concept of Home Assistant subentries.
-- Returns a small, already-redacted dict (``live_video`` + ``error_code``)
+- Returns a small, already-redacted dict (status, error and bounded timing metadata)
   instead of the integration's larger diagnostic dict, so nothing NVR
   credential/URL related can leak into the add-on API response or logs.
 - Runs synchronously (blocking sockets); callers must run it via
@@ -298,6 +298,7 @@ def _observe_rtp(sock: socket.socket, buffered: bytes, video_channel: int) -> di
     packets = 0
     timestamps: set[int] = set()
     first_packet_seen = False
+    first_packet_ms: float | None = None
 
     while time.perf_counter() < deadline:
         while len(data) < 4 and time.perf_counter() < deadline:
@@ -353,11 +354,15 @@ def _observe_rtp(sock: socket.socket, buffered: bytes, video_channel: int) -> di
         if not first_packet_seen:
             first_packet_seen = True
             first_at = time.perf_counter()
+            first_packet_ms = round((first_at - started) * 1000, 1)
             deadline = max(deadline, first_at + RTP_AFTER_FIRST_PACKET_SECONDS)
         if packets >= 2 and len(timestamps) >= 2:
             break
 
-    return {"live_video": packets >= 2 and len(timestamps) >= 2}
+    return {
+        "live_video": packets >= 2 and len(timestamps) >= 2,
+        "nvr_first_packet_ms": first_packet_ms,
+    }
 
 
 def _classify_error(exc_or_reason: str) -> str:
@@ -403,9 +408,10 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
     """Run one DESCRIBE/SETUP/PLAY/RTP probe for ``channel_id``.
 
     Blocking (uses plain sockets); must be called via ``asyncio.to_thread``.
-    Returns ``{"live_video": bool, "error_code": str | None}`` only -- no
-    credentials, RTSP URL or raw exception text.
+    Returns bounded status and timing metadata only -- no credentials, RTSP
+    URL or raw exception text.
     """
+    probe_started = time.perf_counter()
     operation_deadline = time.monotonic() + RTSP_OPERATION_TIMEOUT
     uri = f"rtsp://{nvr.host}:{nvr.port}/cam/realmonitor?channel={channel_id}&subtype=1"
     sock: socket.socket | None = None
@@ -414,6 +420,7 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
     cseq = 1
     live_video = False
     error_code: str | None = None
+    first_packet_ms: float | None = None
     try:
         connect_timeout = min(
             CONNECT_TIMEOUT,
@@ -477,6 +484,7 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
 
         observed = _observe_rtp(sock, buffered, video_channel)
         live_video = observed["live_video"]
+        first_packet_ms = observed.get("nvr_first_packet_ms")
         if not live_video:
             error_code = "no_video"
     except TimeoutError:
@@ -515,4 +523,11 @@ def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
                     pass
             sock.close()
 
-    return {"live_video": live_video, "error_code": error_code}
+    return {
+        "live_video": live_video,
+        "error_code": error_code,
+        "nvr_first_packet_ms": first_packet_ms,
+        "nvr_probe_duration_ms": round(
+            (time.perf_counter() - probe_started) * 1000, 1
+        ),
+    }

@@ -83,21 +83,20 @@
       "recording_recent": { "name": "24 小時內有錄影" },
       "recording_query_problem": { "name": "錄影查詢異常" },
       "onvif_port": { "name": "ONVIF 連接埠" },
-      "rtsp_port": { "name": "RTSP 連接埠" },
-      "motion_active": { "name": "移動偵測" },
-      "video_loss": { "name": "影像遺失" },
-      "video_blind": { "name": "影像遮蔽" }
+      "rtsp_port": { "name": "RTSP 連接埠" }
     },
     "sensor": {
       "diagnostic_status": { "name": "診斷狀態" },
       "camera_rtsp_response": { "name": "攝影機 RTSP 回應時間" },
+      "nvr_first_packet": { "name": "NVR 首個 RTP 封包" },
+      "nvr_probe_duration": { "name": "NVR 探測耗時" },
       "daily_online_rate": { "name": "日在線率" },
       "nvr_live_video_disconnect_count_24h": { "name": "24 小時 NVR 即時畫面斷線次數" },
-      "motion_count_24h": { "name": "24 小時移動事件" },
-      "last_motion": { "name": "上次移動" },
-      "last_dahua_event": { "name": "上次 Dahua 事件" },
       "recording_count_24h": { "name": "24 小時錄影檔數" },
       "recording_coverage_24h": { "name": "24 小時錄影覆蓋率" },
+      "recording_gap_count_24h": { "name": "24 小時錄影缺口數" },
+      "recording_gap_total_24h": { "name": "24 小時錄影缺口總時長" },
+      "largest_recording_gap_24h": { "name": "24 小時最大錄影缺口" },
       "last_recording": { "name": "上次錄影" }
     }
   }

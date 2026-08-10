@@ -34,9 +34,9 @@ class M3SourceContractTests(unittest.TestCase):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
         self.assertNotIn("icmplib", " ".join(manifest.get("requirements", [])))
 
-    def test_manifest_version_is_0_2_8(self):
+    def test_manifest_version_is_0_2_9(self):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
-        self.assertEqual("0.2.8", manifest.get("version"))
+        self.assertEqual("0.2.9", manifest.get("version"))
         self.assertIn("recorder", manifest.get("after_dependencies", []))
 
     def test_local_addon_url_is_fixed_and_not_user_configured(self):
@@ -58,6 +58,46 @@ class M3SourceContractTests(unittest.TestCase):
         self.assertNotIn("Platform.CAMERA", const)
         self.assertNotIn("async_get_snapshot", python)
         self.assertNotIn("AddonSnapshotUnavailable", python)
+
+    def test_unproduced_dahua_event_entities_are_removed(self):
+        python = "\n".join(path.read_text() for path in INTEGRATION.glob("*.py"))
+        self.assertFalse((INTEGRATION / "events.py").exists())
+        for obsolete in (
+            "motion_count_24h",
+            "last_motion",
+            "last_dahua_event",
+            "motion_active",
+            "video_loss",
+            "video_blind",
+            "dahua_event_received",
+        ):
+            with self.subTest(obsolete=obsolete):
+                self.assertNotIn(obsolete, python)
+
+    def test_debug_and_recording_gap_entities_use_addon_data(self):
+        sensor = (INTEGRATION / "sensor.py").read_text()
+        addon_api = (INTEGRATION / "addon_api.py").read_text()
+        addon_main = (ROOT / "9space_snapshot_api/main.py").read_text()
+        for key in (
+            "nvr_first_packet",
+            "nvr_probe_duration",
+            "recording_gap_count_24h",
+            "recording_gap_total_24h",
+            "largest_recording_gap_24h",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(f'key="{key}"', sensor)
+        self.assertIn("recording_gap_total_seconds_24h", addon_api)
+        self.assertIn("largest_recording_gap_seconds_24h", addon_api)
+        for field in (
+            "recording_gap_count_24h",
+            "recording_gap_total_seconds_24h",
+            "largest_recording_gap_seconds_24h",
+            "nvr_first_packet_ms",
+            "nvr_probe_duration_ms",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(f'"{field}"', addon_main)
 
     def test_existing_entity_unique_id_formula_remains(self):
         entity = (INTEGRATION / "entity.py").read_text()

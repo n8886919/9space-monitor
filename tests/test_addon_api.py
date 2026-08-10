@@ -56,6 +56,11 @@ CHANNEL = {
     "live_checked_at": "2026-08-01T21:31:00+08:00",
     "recording_files_24h": 42,
     "recording_coverage_24h": 97.5,
+    "recording_gap_count_24h": 3,
+    "recording_gap_total_seconds_24h": 120.5,
+    "largest_recording_gap_seconds_24h": 60.25,
+    "nvr_first_packet_ms": 250.5,
+    "nvr_probe_duration_ms": 3250.75,
     "checked_at": "2026-08-01T21:31:00+08:00",
     "error_code": None,
 }
@@ -135,6 +140,11 @@ class AddonApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, channels[0].channel_id)
         self.assertEqual(42, channels[0].recording_files_24h)
         self.assertEqual(97.5, channels[0].recording_coverage_24h)
+        self.assertEqual(3, channels[0].recording_gap_count_24h)
+        self.assertEqual(120.5, channels[0].recording_gap_total_seconds_24h)
+        self.assertEqual(60.25, channels[0].largest_recording_gap_seconds_24h)
+        self.assertEqual(250.5, channels[0].nvr_first_packet_ms)
+        self.assertEqual(3250.75, channels[0].nvr_probe_duration_ms)
         self.assertEqual("2026-08-01T21:31:00+08:00", channels[0].live_checked_at)
         self.assertIsNone(channels[0].daily_online_rate)
         self.assertIsNone(channels[0].nvr_live_video_disconnect_count_24h)
@@ -165,6 +175,11 @@ class AddonApiTests(unittest.IsolatedAsyncioTestCase):
             ("recording_files_24h", -1),
             ("recording_files_24h", True),
             ("recording_coverage_24h", 101),
+            ("recording_gap_count_24h", -1),
+            ("recording_gap_total_seconds_24h", -1),
+            ("largest_recording_gap_seconds_24h", True),
+            ("nvr_first_packet_ms", -0.1),
+            ("nvr_probe_duration_ms", 86_400_001),
             ("daily_online_rate", -0.1),
             ("nvr_live_video_disconnect_count_24h", 1.5),
         )

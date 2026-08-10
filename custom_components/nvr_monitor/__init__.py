@@ -18,7 +18,6 @@ from .addon_api import AddonApiClient
 from .api import CameraProbeClient
 from .const import ADDON_BASE_URL, DOMAIN, HA_TELEMETRY_INTERVAL, PLATFORMS
 from .coordinator import AddonCoordinator, CameraServiceCoordinator
-from .events import CameraEventTracker
 from .live_history import LiveHistoryStore
 from .models import cameras_from_entry
 from .recorder_history import async_restore_live_history
@@ -36,7 +35,6 @@ class NvrMonitorRuntimeData:
 
     addon: AddonCoordinator
     service: CameraServiceCoordinator
-    events: CameraEventTracker
     telemetry: HATelemetryProducer | None
     telemetry_unsubscribe: Callable[[], None] | None
 
@@ -54,14 +52,11 @@ async def async_setup_entry(
     await async_restore_live_history(hass, entry, cameras, live_history)
     addon = AddonCoordinator(hass, entry, addon_client, cameras, live_history)
     service = CameraServiceCoordinator(hass, entry, CameraProbeClient(), cameras)
-    events = CameraEventTracker(hass, entry, cameras)
     telemetry = build_producer(entry.data, AiohttpCenterClient(async_get_clientsession(hass)))
     telemetry_unsubscribe = None
-    await events.async_setup()
     entry.runtime_data = NvrMonitorRuntimeData(
         addon=addon,
         service=service,
-        events=events,
         telemetry=telemetry,
         telemetry_unsubscribe=telemetry_unsubscribe,
     )
@@ -109,7 +104,6 @@ async def async_unload_entry(
     hass: HomeAssistant, entry: NvrMonitorConfigEntry
 ) -> bool:
     """Unload a config entry."""
-    await entry.runtime_data.events.async_save()
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     await async_finalize_unload(
         entry.runtime_data.telemetry,

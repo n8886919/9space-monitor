@@ -36,6 +36,8 @@ class ChannelState:
     live_video: Optional[bool] = None
     live_checked_at_ms: Optional[int] = None
     live_error: Optional[str] = None
+    live_first_packet_ms: Optional[float] = None
+    live_probe_duration_ms: Optional[float] = None
 
     recording_query_ok: bool = False
     recording_recent: Optional[bool] = None
@@ -111,12 +113,16 @@ class ChannelStateStore:
         live_video: Optional[bool],
         checked_at_ms: int,
         error_code: Optional[str],
+        first_packet_ms: Optional[float] = None,
+        probe_duration_ms: Optional[float] = None,
     ) -> None:
         async with self._lock:
             state = self._get_or_create(channel_id)
             state.live_video = live_video
             state.live_checked_at_ms = checked_at_ms
             state.live_error = error_code
+            state.live_first_packet_ms = first_packet_ms
+            state.live_probe_duration_ms = probe_duration_ms
 
     async def update_recording(
         self,
@@ -148,6 +154,8 @@ class ChannelStateStore:
             state.live_video = False
             state.live_checked_at_ms = checked_at_ms
             state.live_error = error_code
+            state.live_first_packet_ms = None
+            state.live_probe_duration_ms = None
 
     async def mark_recording_internal_error(
         self, channel_id: int, *, checked_at_ms: int, error_code: str = "internal_error"
@@ -179,6 +187,19 @@ class ChannelStateStore:
             {
                 "recording_files_24h": metrics.get("valid_file_count_24h"),
                 "recording_coverage_24h": metrics.get("recording_coverage_24h_pct"),
+                "recording_gap_count_24h": metrics.get("gap_count_24h"),
+                "recording_gap_total_seconds_24h": metrics.get(
+                    "gap_total_seconds_24h"
+                ),
+                "largest_recording_gap_seconds_24h": metrics.get(
+                    "largest_gap_seconds_24h"
+                ),
+                "nvr_first_packet_ms": (
+                    state.live_first_packet_ms if state is not None else None
+                ),
+                "nvr_probe_duration_ms": (
+                    state.live_probe_duration_ms if state is not None else None
+                ),
             }
         )
         return result

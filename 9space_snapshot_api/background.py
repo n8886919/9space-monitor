@@ -82,6 +82,8 @@ async def _live_probe_one(
         live_video=result["live_video"],
         checked_at_ms=int(time.time() * 1000),
         error_code=result["error_code"],
+        first_packet_ms=result.get("nvr_first_packet_ms"),
+        probe_duration_ms=result.get("nvr_probe_duration_ms"),
     )
 
 

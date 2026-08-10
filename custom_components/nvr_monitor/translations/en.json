@@ -83,21 +83,20 @@
       "recording_recent": { "name": "Recording within 24h" },
       "recording_query_problem": { "name": "Recording query problem" },
       "onvif_port": { "name": "ONVIF port" },
-      "rtsp_port": { "name": "RTSP port" },
-      "motion_active": { "name": "Motion" },
-      "video_loss": { "name": "Video loss" },
-      "video_blind": { "name": "Video blind" }
+      "rtsp_port": { "name": "RTSP port" }
     },
     "sensor": {
       "diagnostic_status": { "name": "Diagnostic status" },
       "camera_rtsp_response": { "name": "Camera RTSP response" },
+      "nvr_first_packet": { "name": "NVR first RTP packet" },
+      "nvr_probe_duration": { "name": "NVR probe duration" },
       "daily_online_rate": { "name": "Daily online rate" },
       "nvr_live_video_disconnect_count_24h": { "name": "NVR live video disconnects 24h" },
-      "motion_count_24h": { "name": "Motion events 24h" },
-      "last_motion": { "name": "Last motion" },
-      "last_dahua_event": { "name": "Last Dahua event" },
       "recording_count_24h": { "name": "Recording files 24h" },
       "recording_coverage_24h": { "name": "Recording coverage 24h" },
+      "recording_gap_count_24h": { "name": "Recording gaps 24h" },
+      "recording_gap_total_24h": { "name": "Recording gap total 24h" },
+      "largest_recording_gap_24h": { "name": "Largest recording gap 24h" },
       "last_recording": { "name": "Last recording" }
     }
   }

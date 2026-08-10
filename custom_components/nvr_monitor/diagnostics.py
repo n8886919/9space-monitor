@@ -38,7 +38,4 @@ async def async_get_config_entry_diagnostics(
         "services": async_redact_data(
             entry.runtime_data.service.data, TO_REDACT
         ),
-        "dahua_events": async_redact_data(
-            entry.runtime_data.events.events, TO_REDACT
-        ),
     }

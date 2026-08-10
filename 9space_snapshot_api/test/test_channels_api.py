@@ -44,7 +44,12 @@ FAKE_OPTS = {
 def _fake_live_probe_channel(channel_id, nvr):
     # Deterministic "NVR reachable, no video yet" fake so tests never
     # depend on real sockets or a real NVR.
-    return {"live_video": False, "error_code": "no_video"}
+    return {
+        "live_video": False,
+        "error_code": "no_video",
+        "nvr_first_packet_ms": 250.5,
+        "nvr_probe_duration_ms": 3250.75,
+    }
 
 
 def _fake_recording_query_channel(channel_id, nvr):
@@ -57,6 +62,9 @@ def _fake_recording_query_channel(channel_id, nvr):
         "metrics": {
             "valid_file_count_24h": 42,
             "recording_coverage_24h_pct": 97.5,
+            "gap_count_24h": 3,
+            "gap_total_seconds_24h": 120.5,
+            "largest_gap_seconds_24h": 60.25,
         },
     }
 
@@ -119,6 +127,11 @@ class AddonApiTests(unittest.TestCase):
             self.assertIsNone(channel["last_recording"])
             self.assertEqual(channel["recording_files_24h"], 42)
             self.assertEqual(channel["recording_coverage_24h"], 97.5)
+            self.assertEqual(channel["recording_gap_count_24h"], 3)
+            self.assertEqual(channel["recording_gap_total_seconds_24h"], 120.5)
+            self.assertEqual(channel["largest_recording_gap_seconds_24h"], 60.25)
+            self.assertEqual(channel["nvr_first_packet_ms"], 250.5)
+            self.assertEqual(channel["nvr_probe_duration_ms"], 3250.75)
             self.assertIsNotNone(channel["live_checked_at"])
             self.assertNotIn("daily_online_rate", channel)
             self.assertNotIn("nvr_live_video_disconnect_count_24h", channel)

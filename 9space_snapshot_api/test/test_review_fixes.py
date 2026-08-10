@@ -366,11 +366,16 @@ class RtspOperationDeadlineTests(unittest.TestCase):
         ), patch.object(
             live_probe, "_send_authenticated", side_effect=_fake_send_authenticated
         ), patch.object(
-            live_probe, "_observe_rtp", return_value={"live_video": True}
+            live_probe,
+            "_observe_rtp",
+            return_value={"live_video": True, "nvr_first_packet_ms": 123.4},
         ):
             result = live_probe.probe_channel(1, nvr)
 
-        self.assertEqual(result, {"live_video": True, "error_code": None})
+        self.assertTrue(result["live_video"])
+        self.assertIsNone(result["error_code"])
+        self.assertEqual(result["nvr_first_packet_ms"], 123.4)
+        self.assertGreaterEqual(result["nvr_probe_duration_ms"], 0)
         self.assertEqual(len(deadlines), 3)
         self.assertEqual(len(set(deadlines)), 1)
 
@@ -414,7 +419,10 @@ class RtspOperationDeadlineTests(unittest.TestCase):
         ), patch.object(live_probe.socket, "create_connection", return_value=sock):
             result = live_probe.probe_channel(1, nvr)
 
-        self.assertEqual(result, {"live_video": False, "error_code": "rtsp_timeout"})
+        self.assertFalse(result["live_video"])
+        self.assertEqual(result["error_code"], "rtsp_timeout")
+        self.assertIsNone(result["nvr_first_packet_ms"])
+        self.assertGreaterEqual(result["nvr_probe_duration_ms"], 0)
         self.assertTrue(sock.closed)
 
 
@@ -1000,7 +1008,10 @@ class OsErrorClassificationTests(unittest.TestCase):
         ):
             result = live_probe.probe_channel(1, self._nvr())
 
-        self.assertEqual(result, {"live_video": False, "error_code": "nvr_unreachable"})
+        self.assertFalse(result["live_video"])
+        self.assertEqual(result["error_code"], "nvr_unreachable")
+        self.assertIsNone(result["nvr_first_packet_ms"])
+        self.assertGreaterEqual(result["nvr_probe_duration_ms"], 0)
 
     def test_connection_refused_maps_to_nvr_unreachable(self) -> None:
         with patch.object(
@@ -1010,7 +1021,10 @@ class OsErrorClassificationTests(unittest.TestCase):
         ):
             result = live_probe.probe_channel(1, self._nvr())
 
-        self.assertEqual(result, {"live_video": False, "error_code": "nvr_unreachable"})
+        self.assertFalse(result["live_video"])
+        self.assertEqual(result["error_code"], "nvr_unreachable")
+        self.assertIsNone(result["nvr_first_packet_ms"])
+        self.assertGreaterEqual(result["nvr_probe_duration_ms"], 0)
 
     def test_generic_network_unreachable_oserror_maps_to_nvr_unreachable(self) -> None:
         import errno
@@ -1020,7 +1034,10 @@ class OsErrorClassificationTests(unittest.TestCase):
         with patch.object(live_probe.socket, "create_connection", side_effect=err):
             result = live_probe.probe_channel(1, self._nvr())
 
-        self.assertEqual(result, {"live_video": False, "error_code": "nvr_unreachable"})
+        self.assertFalse(result["live_video"])
+        self.assertEqual(result["error_code"], "nvr_unreachable")
+        self.assertIsNone(result["nvr_first_packet_ms"])
+        self.assertGreaterEqual(result["nvr_probe_duration_ms"], 0)
 
     def test_socket_timeout_still_maps_to_rtsp_timeout(self) -> None:
         with patch.object(
@@ -1028,7 +1045,10 @@ class OsErrorClassificationTests(unittest.TestCase):
         ):
             result = live_probe.probe_channel(1, self._nvr())
 
-        self.assertEqual(result, {"live_video": False, "error_code": "rtsp_timeout"})
+        self.assertFalse(result["live_video"])
+        self.assertEqual(result["error_code"], "rtsp_timeout")
+        self.assertIsNone(result["nvr_first_packet_ms"])
+        self.assertGreaterEqual(result["nvr_probe_duration_ms"], 0)
 
     def test_protocol_runtime_error_does_not_map_to_nvr_unreachable(self) -> None:
         sock = RtspOperationDeadlineTests._Socket()

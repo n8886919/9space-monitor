@@ -32,7 +32,7 @@ OPTIONS_PATH = "/data/options.json"
 QUEUE_TIMEOUT_MS = 300
 DEFAULT_SNAPSHOT_CONCURRENCY = 1
 MAX_SNAPSHOT_CONCURRENCY = 8
-ADDON_VERSION = "0.3.11"
+ADDON_VERSION = "0.3.12"
 
 _sem: Optional[asyncio.Semaphore] = None
 
@@ -475,6 +475,15 @@ def _channel_status(channel_id: int) -> dict:
         "last_recording": state["last_recording"],
         "recording_files_24h": state["recording_files_24h"],
         "recording_coverage_24h": state["recording_coverage_24h"],
+        "recording_gap_count_24h": state["recording_gap_count_24h"],
+        "recording_gap_total_seconds_24h": state[
+            "recording_gap_total_seconds_24h"
+        ],
+        "largest_recording_gap_seconds_24h": state[
+            "largest_recording_gap_seconds_24h"
+        ],
+        "nvr_first_packet_ms": state["nvr_first_packet_ms"],
+        "nvr_probe_duration_ms": state["nvr_probe_duration_ms"],
         "checked_at": state["checked_at"],
         "error_code": state["error_code"],
     }

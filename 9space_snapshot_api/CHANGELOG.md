@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.12 - 2026-08-10
+
+- Exposed recording gap count, total duration and largest duration from the
+  existing 24-hour recording query.
+- Exposed bounded RTSP first-packet and full probe durations for local Home
+  Assistant diagnostics.
+
 ## 0.3.11 - 2026-08-10
 
 - Removed `rtsp_port` and `nvr_http_port`; Dahua RTSP/HTTP are fixed at 554/80.

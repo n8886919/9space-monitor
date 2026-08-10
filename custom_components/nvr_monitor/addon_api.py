@@ -34,6 +34,11 @@ class AddonChannel:
     live_checked_at: str | None
     recording_files_24h: int | None
     recording_coverage_24h: float | None
+    recording_gap_count_24h: int | None
+    recording_gap_total_seconds_24h: float | None
+    largest_recording_gap_seconds_24h: float | None
+    nvr_first_packet_ms: float | None
+    nvr_probe_duration_ms: float | None
     daily_online_rate: float | None
     nvr_live_video_disconnect_count_24h: int | None
     checked_at: str | None
@@ -80,8 +85,9 @@ class AddonChannel:
                 if parsed.tzinfo is None:
                     raise AddonInvalidResponse("invalid_channel_contract")
         recording_files = value.get("recording_files_24h")
+        recording_gap_count = value.get("recording_gap_count_24h")
         disconnects = value.get("nvr_live_video_disconnect_count_24h")
-        for metric in (recording_files, disconnects):
+        for metric in (recording_files, recording_gap_count, disconnects):
             if metric is not None and (
                 type(metric) is not int or not 0 <= metric <= 10_000_000
             ):
@@ -93,6 +99,21 @@ class AddonChannel:
                 type(metric) not in {int, float} or not 0 <= float(metric) <= 100
             ):
                 raise AddonInvalidResponse("invalid_channel_contract")
+        timing_fields = (
+            "recording_gap_total_seconds_24h",
+            "largest_recording_gap_seconds_24h",
+            "nvr_first_packet_ms",
+            "nvr_probe_duration_ms",
+        )
+        timings: dict[str, float | None] = {}
+        for key in timing_fields:
+            metric = value.get(key)
+            if metric is not None and (
+                type(metric) not in {int, float}
+                or not 0 <= float(metric) <= 86_400_000
+            ):
+                raise AddonInvalidResponse("invalid_channel_contract")
+            timings[key] = float(metric) if metric is not None else None
         return cls(
             channel_id=channel_id,
             live_video=value["live_video"],
@@ -102,6 +123,15 @@ class AddonChannel:
             live_checked_at=value.get("live_checked_at"),
             recording_files_24h=recording_files,
             recording_coverage_24h=float(coverage) if coverage is not None else None,
+            recording_gap_count_24h=recording_gap_count,
+            recording_gap_total_seconds_24h=timings[
+                "recording_gap_total_seconds_24h"
+            ],
+            largest_recording_gap_seconds_24h=timings[
+                "largest_recording_gap_seconds_24h"
+            ],
+            nvr_first_packet_ms=timings["nvr_first_packet_ms"],
+            nvr_probe_duration_ms=timings["nvr_probe_duration_ms"],
             daily_online_rate=float(online_rate) if online_rate is not None else None,
             nvr_live_video_disconnect_count_24h=disconnects,
             checked_at=value["checked_at"],
@@ -119,6 +149,15 @@ class AddonChannel:
             "live_checked_at": self.live_checked_at,
             "recording_files_24h": self.recording_files_24h,
             "recording_coverage_24h": self.recording_coverage_24h,
+            "recording_gap_count_24h": self.recording_gap_count_24h,
+            "recording_gap_total_seconds_24h": (
+                self.recording_gap_total_seconds_24h
+            ),
+            "largest_recording_gap_seconds_24h": (
+                self.largest_recording_gap_seconds_24h
+            ),
+            "nvr_first_packet_ms": self.nvr_first_packet_ms,
+            "nvr_probe_duration_ms": self.nvr_probe_duration_ms,
             "daily_online_rate": self.daily_online_rate,
             "nvr_live_video_disconnect_count_24h": (
                 self.nvr_live_video_disconnect_count_24h
