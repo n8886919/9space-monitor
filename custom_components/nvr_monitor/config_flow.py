@@ -30,10 +30,9 @@ from .addon_api import (
     AddonApiClient,
     AddonCannotConnect,
     AddonInvalidResponse,
-    normalize_base_url,
 )
 from .const import (
-    CONF_ADDON_BASE_URL,
+    ADDON_BASE_URL,
     CONF_CAMERA_IP,
     CONF_CAMERA_NAME,
     CONF_CAMERA_ONVIF_PORT,
@@ -67,15 +66,7 @@ def _port_selector(default: int) -> NumberSelector:
     )
 
 
-ADDON_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_ADDON_BASE_URL): TextSelector(
-            TextSelectorConfig(
-                type=TextSelectorType.URL,
-            )
-        ),
-    }
-)
+ADDON_SCHEMA = vol.Schema({})
 
 TELEMETRY_SCHEMA = {
     vol.Optional(CONF_TELEMETRY_SITE_ID): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
@@ -128,19 +119,9 @@ class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    def _base_url_is_configured(
-        self, base_url: str, *, ignored_entry_id: str | None = None
-    ) -> bool:
-        """Return whether another entry already uses the normalized URL."""
-        return any(
-            entry.entry_id != ignored_entry_id
-            and entry.data.get(CONF_ADDON_BASE_URL) == base_url
-            for entry in self._async_current_entries()
-        )
-
-    async def _async_validate_addon(self, base_url: str) -> None:
+    async def _async_validate_addon(self) -> None:
         """Validate process health and the channel response contract."""
-        client = AddonApiClient(base_url, async_get_clientsession(self.hass))
+        client = AddonApiClient(ADDON_BASE_URL, async_get_clientsession(self.hass))
         await client.async_get_health()
         await client.async_get_channels()
 
@@ -158,29 +139,22 @@ class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
         """Configure the local add-on API."""
         errors: dict[str, str] = {}
         if user_input is not None:
+            if self._async_current_entries():
+                return self.async_abort(reason="already_configured")
             try:
-                base_url = normalize_base_url(
-                    str(user_input[CONF_ADDON_BASE_URL])
-                )
-            except ValueError:
+                await self._async_validate_addon()
+            except AddonCannotConnect:
+                errors["base"] = "cannot_connect"
+            except AddonInvalidResponse:
                 errors["base"] = "invalid_response"
+            except Exception:
+                _LOGGER.error("Unexpected add-on validation error")
+                errors["base"] = "unknown"
             else:
-                if self._base_url_is_configured(base_url):
-                    return self.async_abort(reason="already_configured")
-                try:
-                    await self._async_validate_addon(base_url)
-                except AddonCannotConnect:
-                    errors["base"] = "cannot_connect"
-                except AddonInvalidResponse:
-                    errors["base"] = "invalid_response"
-                except Exception:
-                    _LOGGER.error("Unexpected add-on validation error")
-                    errors["base"] = "unknown"
-                else:
-                    return self.async_create_entry(
-                        title="NVR Monitor add-on",
-                        data={CONF_ADDON_BASE_URL: base_url},
-                    )
+                return self.async_create_entry(
+                    title="NVR Monitor add-on",
+                    data={},
+                )
 
         return self.async_show_form(
             step_id="user",
@@ -207,37 +181,25 @@ class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                     errors=errors,
                 )
             try:
-                base_url = normalize_base_url(
-                    str(user_input[CONF_ADDON_BASE_URL])
-                )
-            except ValueError:
+                await self._async_validate_addon()
+            except AddonCannotConnect:
+                errors["base"] = "cannot_connect"
+            except AddonInvalidResponse:
                 errors["base"] = "invalid_response"
+            except Exception:
+                _LOGGER.error("Unexpected add-on validation error")
+                errors["base"] = "unknown"
             else:
-                if self._base_url_is_configured(
-                    base_url, ignored_entry_id=entry.entry_id
-                ):
-                    errors["base"] = "already_configured"
-                else:
-                    try:
-                        await self._async_validate_addon(base_url)
-                    except AddonCannotConnect:
-                        errors["base"] = "cannot_connect"
-                    except AddonInvalidResponse:
-                        errors["base"] = "invalid_response"
-                    except Exception:
-                        _LOGGER.error("Unexpected add-on validation error")
-                        errors["base"] = "unknown"
-                    else:
-                        data = {CONF_ADDON_BASE_URL: base_url}
-                        for key in TELEMETRY_SCHEMA:
-                            field = key.schema
-                            if user_input.get(field):
-                                data[field] = user_input[field]
-                        return self.async_update_reload_and_abort(
-                            entry,
-                            title="NVR Monitor add-on",
-                            data=data,
-                        )
+                data = {}
+                for key in TELEMETRY_SCHEMA:
+                    field = key.schema
+                    if user_input.get(field):
+                        data[field] = user_input[field]
+                return self.async_update_reload_and_abort(
+                    entry,
+                    title="NVR Monitor add-on",
+                    data=data,
+                )
 
         return self.async_show_form(
             step_id="reconfigure",

@@ -2,7 +2,7 @@
   "title": "NVR Monitor",
   "config": {
     "abort": {
-      "already_configured": "This add-on URL is already configured.",
+      "already_configured": "NVR Monitor is already configured.",
       "reconfigure_successful": "Configuration updated successfully."
     },
     "error": {
@@ -15,16 +15,13 @@
     "step": {
       "user": {
         "title": "Connect to local add-on",
-        "description": "Enter the local base URL of the 9Space snapshot add-on.",
-        "data": {
-          "addon_base_url": "Add-on base URL"
-        }
+        "description": "NVR Monitor connects automatically to the local 9Space snapshot add-on.",
+        "data": {}
       },
       "reconfigure": {
-        "title": "Edit add-on connection",
-        "description": "Telemetry is optional. Its mapping is stored only in this Home Assistant config entry and is never sent to Hub.",
+        "title": "Edit NVR Monitor",
+        "description": "The local add-on connection is automatic. Telemetry is optional; its mapping is stored only in this Home Assistant config entry and is never sent to Hub.",
         "data": {
-          "addon_base_url": "Add-on base URL",
           "telemetry_site_id": "Telemetry site ID",
           "telemetry_display_name": "Telemetry display name",
           "telemetry_center_url": "Hub telemetry ingest URL",

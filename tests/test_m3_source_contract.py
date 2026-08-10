@@ -34,10 +34,22 @@ class M3SourceContractTests(unittest.TestCase):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
         self.assertNotIn("icmplib", " ".join(manifest.get("requirements", [])))
 
-    def test_manifest_version_is_0_2_7(self):
+    def test_manifest_version_is_0_2_8(self):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
-        self.assertEqual("0.2.7", manifest.get("version"))
+        self.assertEqual("0.2.8", manifest.get("version"))
         self.assertIn("recorder", manifest.get("after_dependencies", []))
+
+    def test_local_addon_url_is_fixed_and_not_user_configured(self):
+        const = (INTEGRATION / "const.py").read_text()
+        config_flow = (INTEGRATION / "config_flow.py").read_text()
+        init = (INTEGRATION / "__init__.py").read_text()
+        self.assertIn(
+            'ADDON_BASE_URL = "http://afa94ae2-9space-snapshot-addon:8000"',
+            const,
+        )
+        self.assertIn("ADDON_SCHEMA = vol.Schema({})", config_flow)
+        self.assertNotIn("CONF_ADDON_BASE_URL", config_flow)
+        self.assertIn("AddonApiClient(ADDON_BASE_URL", init)
 
     def test_snapshot_camera_platform_and_client_are_removed(self):
         const = (INTEGRATION / "const.py").read_text()

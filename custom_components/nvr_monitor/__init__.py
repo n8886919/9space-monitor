@@ -16,7 +16,7 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from .addon_api import AddonApiClient
 from .api import CameraProbeClient
-from .const import CONF_ADDON_BASE_URL, DOMAIN, HA_TELEMETRY_INTERVAL, PLATFORMS
+from .const import ADDON_BASE_URL, DOMAIN, HA_TELEMETRY_INTERVAL, PLATFORMS
 from .coordinator import AddonCoordinator, CameraServiceCoordinator
 from .events import CameraEventTracker
 from .live_history import LiveHistoryStore
@@ -48,13 +48,8 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: NvrMonitorConfigEntry
 ) -> bool:
     """Set up NVR Monitor without blocking on add-on availability."""
-    base_url = entry.data.get(CONF_ADDON_BASE_URL)
-    if not isinstance(base_url, str) or not base_url:
-        # M3 deliberately has no credential migration or direct-NVR fallback.
-        return False
-
     cameras = cameras_from_entry(entry)
-    addon_client = AddonApiClient(base_url, async_get_clientsession(hass))
+    addon_client = AddonApiClient(ADDON_BASE_URL, async_get_clientsession(hass))
     live_history = LiveHistoryStore()
     await async_restore_live_history(hass, entry, cameras, live_history)
     addon = AddonCoordinator(hass, entry, addon_client, cameras, live_history)
@@ -106,7 +101,7 @@ async def async_setup_entry(
 async def _async_update_listener(
     hass: HomeAssistant, entry: NvrMonitorConfigEntry
 ) -> None:
-    """Reload when the add-on URL or camera subentries change."""
+    """Reload when config entry data or camera subentries change."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 

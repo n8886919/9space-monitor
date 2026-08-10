@@ -374,9 +374,11 @@ filter_logs_after_marker() {
 ### 1. 上傳 integration
 
 Snapshot add-on `0.3.11` 需要 integration `0.2.6` 或更新版本，才能由
-`live_checked_at` 維護 integration-owned 24 小時 RAM ring。Integration `0.2.7`
+`live_checked_at` 維護 integration-owned 24 小時 RAM ring。Integration `0.2.8`
 在啟動時透過 Recorder 的 read-only executor API 重建最近 24 小時 window；不建立
-第二份磁碟 history，add-on 與 Hub 仍不接收在線率或斷線次數。
+第二份磁碟 history，add-on 與 Hub 仍不接收在線率或斷線次數。Integration runtime
+固定使用 Supervisor internal URL `http://afa94ae2-9space-snapshot-addon:8000`，config
+flow／Reconfigure 不再要求或保存使用者輸入的 add-on URL。
 
 ```bash
 tar -C custom_components -czf /tmp/nvr_monitor.tgz nvr_monitor
@@ -392,7 +394,7 @@ scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh \
 
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
-EXPECTED_VERSION="0.2.7"
+EXPECTED_VERSION="0.2.8"
 CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
 mkdir -p /config/9space_deploy
 ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nvr-monitor.XXXXXX)
@@ -499,7 +501,7 @@ Agent 不得自行替使用者選擇會改變 config-entry／entity identity 的
 [ ] /healthz 正常（monorepo add-on host port = 8222）
 [ ] 舊 /api/camera/{camera_id} 正常（monorepo add-on host port = 8222）
 [ ] /api/v1/channels 正常（monorepo add-on host port = 8222）
-[ ] integration base URL = http://${ADDON_HOSTNAME}:8000
+[ ] integration runtime 使用固定 Supervisor internal URL，UI 無 add-on URL 欄位
 [ ] Reconfigure 後既有 entry、subentries 與非 Snapshot entity identities 保留
 [ ] 使用者已在 HA UI 移除 orphan `camera.*_snapshot` entities；未修改 `.storage`，未產生 `_2`
 [ ] add-on Snapshot endpoint Content-Type 為 image/jpeg（Hub contract）
@@ -588,11 +590,9 @@ REMOTE_SCRIPT
 
 Rollback 使用相同 helper；還原 integration source 後必須先通過 `ha core check` 才能重新啟動 Core。驗證完成後，以前述相同 path gate 清除原 deployment 與 rollback transaction，不在 `custom_components` 留 artifact。
 
-若 entry data 已改成 `addon_base_url`：
-
-1. 透過舊版 UI Reconfigure 恢復舊 NVR 設定。
-2. 不直接覆寫或編輯 `.storage`。
-3. 若缺少舊 credentials，停止並交由使用者處理。
+舊 entry data 若仍含 `addon_base_url`，0.2.8 runtime 會忽略它；不得直接覆寫或編輯
+`.storage`。使用者日後經 UI Reconfigure 儲存時，該舊 key 會自然移除，entity identity
+不變。
 
 ### Add-on rollback
 

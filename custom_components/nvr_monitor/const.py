@@ -6,7 +6,7 @@ from homeassistant.const import Platform
 
 DOMAIN = "nvr_monitor"
 
-CONF_ADDON_BASE_URL = "addon_base_url"
+ADDON_BASE_URL = "http://afa94ae2-9space-snapshot-addon:8000"
 CONF_CAMERA_IP = "camera_ip"
 CONF_NVR_CHANNEL = "nvr_channel"
 CONF_CAMERA_NAME = "camera_name"
