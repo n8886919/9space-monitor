@@ -8,20 +8,20 @@
 Home Assistant
 ├── nine_space_nvr_monitor integration
 │   ├── config flow、entities、coordinator、diagnostics
-│   ├── 讀取 local app API
-│   └── push allowlisted HA telemetry
+│   └── 只讀取 local app API
 │
 └── nine_space_snapshot app
     ├── 唯一保存 NVR credentials 並直接連接 NVR
     ├── live-video probe、recording query、snapshot/cache
     ├── legacy 與 local HTTP API
-    └── push NVR telemetry
+    └── 定期向 Hub 註冊 snapshot site/channel
             │
             └── Tailscale ──> 9Space Hub app
 
 中央 Home Assistant
 ├── 9Space Hub app
-│   ├── current telemetry 只留 RAM
+│   ├── 依 registration 跨站拉取 snapshot
+│   ├── snapshot attempt/counter 只留 RAM
 │   ├── debug Web UI
 │   └── bounded last-good snapshot store（每 site/channel 最多一張）
 └── nine_space_hub component
@@ -35,11 +35,11 @@ App 是唯一直接存取 Dahua NVR 的元件。Integration 不保存 NVR creden
 
 ## Components
 
-- `nine_space_snapshot/`：由 Home Assistant Supervisor managed repository 安裝／更新的 app、NVR adapters、snapshot 與 telemetry producer；不使用 HA local `/addons` source install。
-- `custom_components/nine_space_nvr_monitor/`：Home Assistant custom integration 與 allowlisted HA telemetry producer。
-- `nine_space_hub/`：Supervisor app、RAM current-state、snapshot scheduler/store 與 debug Web UI。
+- `nine_space_snapshot/`：由 Home Assistant Supervisor managed repository 安裝／更新的 app、NVR adapters、snapshot 與 Hub registration；不使用 HA local `/addons` source install。
+- `custom_components/nine_space_nvr_monitor/`：只負責本機 NVR 狀態 entities 的 Home Assistant custom integration。
+- `nine_space_hub/`：Supervisor app、RAM snapshot counters、snapshot scheduler/store 與 debug Web UI。
 - `custom_components/nine_space_hub/`：中央 Home Assistant component，將 Hub 當下狀態映射成 Recorder-managed entities。
-- `dashboard/`：以每站 private mapping 產生 local Lovelace 與非 Ping HA telemetry mapping；Ping (ICMP) 與其 statistics 留在 Home Assistant local，sample 只含合成資料。
+- `dashboard/`：以每站 private mapping 產生 local Lovelace；Ping (ICMP) 與其 statistics 留在 Home Assistant local，sample 只含合成資料。
 - `tests/`、`nine_space_snapshot/test/`：API、safety、storage、lifecycle 與 compatibility tests。
 
 ## Development start
@@ -59,7 +59,6 @@ Hub app 設定見 `nine_space_hub/README.md`。Dashboard renderer 範例：
 ```bash
 python3 -m dashboard.render dashboard/chengde.sample.json --format lovelace
 python3 -m dashboard.render dashboard/chengde.sample.json --format lovelace-view
-python3 -m dashboard.render dashboard/chengde.sample.json --format telemetry
 ```
 
 真實 site mapping 使用 ignored 的 `dashboard/*.private.json`；不得提交真實 entity IDs、IP、credentials 或影像。
@@ -68,7 +67,7 @@ python3 -m dashboard.render dashboard/chengde.sample.json --format telemetry
 
 - `AGENTS.md`：agent 入口、永久架構／安全規則與風險分級。
 - `STATUS.md`：短期 current／deployed／next／blockers／last-known 狀態。
-- `API.md`：legacy、local、Hub telemetry 與 snapshot API contract。
+- `API.md`：legacy、local 與 Hub snapshot registration/API contract。
 - `DEPLOY.md`：單站手動 SSH 部署、checks、smoke test 與 rollback reference。
 - `.agents/skills/9space-diagnostic/SKILL.md`：Home Assistant／NVR 唯讀診斷。
 - `nine_space_hub/README.md`：Hub app options、資料責任與 API。

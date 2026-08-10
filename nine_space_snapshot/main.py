@@ -14,12 +14,12 @@ from fastapi.responses import JSONResponse
 import background
 from channel_state import ChannelStateStore
 from constants import NVR_RTSP_PORT
-from telemetry import (
-    NvrTelemetryModel,
-    TelemetryProducer,
-    hub_telemetry_destination,
+from hub_registration import (
+    REGISTRATION_INTERVAL_SECONDS,
+    channel_ids,
+    hub_registration_destination,
+    post_registration,
     safe_site_metadata,
-    telemetry_channel_ids,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ OPTIONS_PATH = "/data/options.json"
 QUEUE_TIMEOUT_MS = 300
 DEFAULT_SNAPSHOT_CONCURRENCY = 1
 MAX_SNAPSHOT_CONCURRENCY = 8
-ADDON_VERSION = "0.3.13"
+ADDON_VERSION = "0.3.14"
 
 _sem: Optional[asyncio.Semaphore] = None
 
@@ -47,75 +47,35 @@ _background_sem: Optional[asyncio.Semaphore] = None
 _channel_store = ChannelStateStore()
 _live_task: Optional[asyncio.Task] = None
 _recording_task: Optional[asyncio.Task] = None
-_telemetry_task: Optional[asyncio.Task] = None
+_hub_registration_task: Optional[asyncio.Task] = None
 # Set once each background loop's first round has completed. Tests can wait
 # on these (from a different thread) instead of racing the background task.
 _live_first_round_ready = threading.Event()
 _recording_first_round_ready = threading.Event()
 
 
-async def _telemetry_loop() -> None:
-    """Push current channel state as best-effort safe metadata.
-
-    This intentionally never calls an NVR service.  The queue's ``put_nowait``
-    path means Hub latency or an outage cannot delay snapshot handlers or
-    either background NVR loop.
-    """
-    opts = _load_options()
-    metadata = safe_site_metadata(opts.get("site_id"), opts.get("site_display_name"))
-    if metadata is None:
-        return
-    site_id, display_name = metadata
-    destination = await asyncio.to_thread(
-        hub_telemetry_destination, opts.get("hub_ip"), site_id
-    )
-    while destination is None:
-        await asyncio.sleep(30)
+async def _hub_registration_loop() -> None:
+    """Periodically register only the information Hub needs to pull snapshots."""
+    while True:
         opts = _load_options()
-        destination = await asyncio.to_thread(
-            hub_telemetry_destination, opts.get("hub_ip"), site_id
-        )
-    center_url, center_host_header, site_ip = destination
-    # A 30-second lower bound prevents a stale option from flooding Hub.
-    interval_seconds = max(30, int(_opt(opts, "telemetry_interval_seconds", 300)))
-    producer = TelemetryProducer(
-        center_url=center_url,
-        center_host_header=center_host_header,
-        site_id=site_id,
-        display_name=display_name,
-        queue_max_batches=max(1, int(_opt(opts, "telemetry_queue_max_batches", 100))),
-        registration=_hub_snapshot_registration(opts, site_ip=site_ip),
-    )
-    model = NvrTelemetryModel()
-    producer.start()
-    try:
-        while True:
-            now_ms = int(time.time() * 1000)
-            channel_states = {
-                channel_id: _channel_store.telemetry_snapshot(channel_id)
-                for channel_id in telemetry_channel_ids(_load_options().get("channel_count"))
-            }
-            events = model.events(
-                site_id,
-                channel_states,
-                now_ms=now_ms,
-                dropped_events=producer.dropped_events,
-                producer_health={
-                    "source_version": ADDON_VERSION,
-                    "snapshot_max_concurrency": _snapshot_concurrency(_load_options()),
-                    "telemetry_queue_depth": producer.queue_depth,
-                    "telemetry_queue_capacity": producer.queue_capacity,
-                    "producer_state": producer.state,
-                    "center_reachable": producer.center_reachable,
-                },
-            )
-            # Hub accepts at most 500 events per batch.  Splitting here
-            # remains non-blocking; any full queue simply drops that chunk.
-            for offset in range(0, len(events), 500):
-                producer.enqueue(events[offset : offset + 500])
-            await asyncio.sleep(interval_seconds)
-    finally:
-        await producer.stop()
+        metadata = safe_site_metadata(opts.get("site_id"), opts.get("site_display_name"))
+        if metadata is not None:
+            site_id, display_name = metadata
+            destination = await asyncio.to_thread(hub_registration_destination, opts.get("hub_ip"), site_id)
+            if destination is not None:
+                url, host_header, site_ip = destination
+                registration = _hub_snapshot_registration(opts, site_ip=site_ip)
+                if registration is not None:
+                    payload = {
+                        "site_id": site_id,
+                        "display_name": display_name,
+                        **registration,
+                    }
+                    try:
+                        await post_registration(url, host_header, payload)
+                    except Exception:  # noqa: BLE001 - registration must not affect local NVR work
+                        pass
+        await asyncio.sleep(REGISTRATION_INTERVAL_SECONDS)
 
 
 @dataclass
@@ -152,9 +112,11 @@ def _snapshot_concurrency(opts: dict) -> int:
     return min(value, MAX_SNAPSHOT_CONCURRENCY)
 
 
-def _hub_snapshot_registration(opts: dict, *, site_ip: str | None = None) -> dict | None:
-    """Derive Hub scheduling from existing local options, fail closed on bad input."""
-    channels = list(telemetry_channel_ids(opts.get("channel_count")))
+def _hub_snapshot_registration(
+    opts: dict, *, site_ip: str | None = None
+) -> dict | None:
+    """Build the bounded snapshot-only registration fields for Hub."""
+    channels = channel_ids(opts.get("channel_count"))
     if not channels:
         return None
     timeout_ms = opts.get("health_timeout_ms", 10000)
@@ -283,7 +245,7 @@ async def _ffmpeg_grab_jpeg(
 
 @app.on_event("startup")
 async def _startup():
-    global _sem, _background_sem, _live_task, _recording_task, _telemetry_task
+    global _sem, _background_sem, _live_task, _recording_task, _hub_registration_task
     _sem = asyncio.Semaphore(_snapshot_concurrency(_load_options()))
     # Live-video probing and recording queries share this single semaphore
     # (fixed background.BACKGROUND_CONCURRENCY, not the legacy option) so
@@ -308,7 +270,7 @@ async def _startup():
             ready_event=_recording_first_round_ready,
         )
     )
-    _telemetry_task = asyncio.create_task(_telemetry_loop())
+    _hub_registration_task = asyncio.create_task(_hub_registration_loop())
 
 
 @app.on_event("shutdown")
@@ -326,11 +288,11 @@ async def _shutdown():
     force-cancellable, and lower-level DNS / OS socket behaviour may still
     delay the underlying thread beyond the coroutine's cancellation.
     """
-    global _live_task, _recording_task, _telemetry_task
-    for task in (_live_task, _recording_task, _telemetry_task):
+    global _live_task, _recording_task, _hub_registration_task
+    for task in (_live_task, _recording_task, _hub_registration_task):
         if task is not None:
             task.cancel()
-    for task in (_live_task, _recording_task, _telemetry_task):
+    for task in (_live_task, _recording_task, _hub_registration_task):
         if task is not None:
             try:
                 await task
@@ -338,7 +300,7 @@ async def _shutdown():
                 pass
     _live_task = None
     _recording_task = None
-    _telemetry_task = None
+    _hub_registration_task = None
 
 
 # ---------------------------------------------------------------------------

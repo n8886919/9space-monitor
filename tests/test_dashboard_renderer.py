@@ -8,7 +8,6 @@ import unittest
 from dashboard.render import (
     lovelace_view_yaml,
     lovelace_yaml,
-    telemetry_json,
     validate_mapping,
 )
 
@@ -41,10 +40,7 @@ class DashboardRendererTests(unittest.TestCase):
         self.assertIn("stat_type: mean", yaml)
         self.assertIn("name: \"CPU\"", yaml)
         self.assertNotIn("name: \"sensor.sample_cpu\"", yaml)
-        telemetry = json.loads(telemetry_json(mapping))
-        self.assertEqual(telemetry, validate_mapping(mapping)["telemetry"])
-        self.assertNotIn("ha.ping", {item["kind"] for item in telemetry})
-        self.assertTrue(all(item["channel_id"] is None for item in telemetry))
+        self.assertNotIn("telemetry", validate_mapping(mapping))
 
         view_yaml = lovelace_view_yaml(mapping)
         self.assertTrue(view_yaml.startswith('title: "承德"\npath: "chengde"\ncards:\n'))
@@ -102,7 +98,6 @@ class DashboardRendererTests(unittest.TestCase):
         for channel in shuffled["channels"]:
             channel["ping"].reverse()
             channel["nvr_entities"] = dict(reversed(list(channel["nvr_entities"].items())))
-        self.assertEqual(telemetry_json(ordered), telemetry_json(shuffled))
         self.assertEqual(lovelace_yaml(ordered), lovelace_yaml(shuffled))
         validate_mapping(ordered)
         self.assertEqual(original, json.dumps(ordered, sort_keys=True))

@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 
-from .validation import TelemetryValidationError, validate_site_id
+from .validation import validate_site_id
 
 DEFAULT_MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 DEFAULT_STORE_LIMIT_BYTES = 1024 * 1024 * 1024

@@ -42,18 +42,13 @@ function cameraCard(siteId, camera) {
 function renderSite(site) {
   const root = document.getElementById("site-content"); root.replaceChildren(el("h2", site.display_name));
   const rows = site.cameras.map(camera => [
-    camera.label,
-    yesNo(camera.live_video),
-    yesNo(camera.recording_query_ok),
-    yesNo(camera.recording_recent),
-    shown(camera.last_recording),
-    shown(camera.recording_files_24h),
-    shown(camera.recording_coverage_24h),
-    yesNo(camera.snapshot_available),
-    shown(camera.recording_error),
+    camera.label, yesNo(camera.snapshot_available),
+    shown(camera.snapshot_success_rate), shown(camera.snapshot_success_count),
+    shown(camera.snapshot_failure_count), shown(camera.snapshot_consecutive_failures),
+    shown(camera.latest_attempt?.error_code),
   ]);
   root.append(table(
-    ["Camera", "Live", "錄影查詢", "24h 有錄影", "最後錄影", "檔案數", "覆蓋率", "截圖", "錯誤"],
+    ["Camera", "截圖可用", "成功率 %", "成功", "失敗", "連續失敗", "最近錯誤"],
     rows,
   ));
   root.append(el("h3", "Snapshot last-good（每鏡頭一張）"));

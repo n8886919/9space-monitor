@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.14 - 2026-08-10
+
+- Removed the generic NVR telemetry model, RAM queue, event batching, and Hub
+  ingest producer.
+- Replaced them with a snapshot-only registration heartbeat containing only
+  site identity, channel mapping, and bounded pull scheduling parameters.
+
 ## 0.3.13 - 2026-08-10
 
 - Changed the snapshot RTSP stream default and runtime fallback from main

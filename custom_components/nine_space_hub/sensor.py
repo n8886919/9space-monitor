@@ -21,25 +21,20 @@ class HubSensorDescription(SensorEntityDescription):
     value_fn: Callable[[HubCamera], StateType | datetime]
 
 
-def _iso(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
-
-
 def _epoch_ms(value: int | None) -> datetime | None:
     return datetime.fromtimestamp(value / 1000, timezone.utc) if value is not None else None
 
 
 DESCRIPTIONS = (
-    HubSensorDescription(
-        key="recording_files_24h", translation_key="recording_files_24h",
-        native_unit_of_measurement="files", state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda camera: camera.recording_files_24h,
-    ),
-    HubSensorDescription(
-        key="recording_coverage_24h", translation_key="recording_coverage_24h",
+    HubSensorDescription(key="snapshot_success_rate", translation_key="snapshot_success_rate",
         native_unit_of_measurement=PERCENTAGE, state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda camera: camera.recording_coverage_24h,
-    ),
+        value_fn=lambda camera: camera.snapshot_success_rate),
+    HubSensorDescription(key="snapshot_success_count", translation_key="snapshot_success_count",
+        state_class=SensorStateClass.TOTAL_INCREASING, value_fn=lambda camera: camera.snapshot_success_count),
+    HubSensorDescription(key="snapshot_failure_count", translation_key="snapshot_failure_count",
+        state_class=SensorStateClass.TOTAL_INCREASING, value_fn=lambda camera: camera.snapshot_failure_count),
+    HubSensorDescription(key="snapshot_consecutive_failures", translation_key="snapshot_consecutive_failures",
+        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda camera: camera.snapshot_consecutive_failures),
     HubSensorDescription(
         key="snapshot_latency", translation_key="snapshot_latency",
         native_unit_of_measurement=UnitOfTime.MILLISECONDS, state_class=SensorStateClass.MEASUREMENT,
@@ -49,10 +44,6 @@ DESCRIPTIONS = (
         key="snapshot_age", translation_key="snapshot_age",
         native_unit_of_measurement=UnitOfTime.SECONDS, state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda camera: camera.last_good_age_seconds,
-    ),
-    HubSensorDescription(
-        key="last_recording", translation_key="last_recording",
-        device_class=SensorDeviceClass.TIMESTAMP, value_fn=lambda camera: _iso(camera.last_recording),
     ),
     HubSensorDescription(
         key="last_snapshot_attempt", translation_key="last_snapshot_attempt",
@@ -90,8 +81,5 @@ class HubSensor(HubCameraEntity, SensorEntity):
         attributes = dict(super().extra_state_attributes)
         camera = self.camera
         if camera is not None:
-            attributes.update({
-                "snapshot_error": camera.snapshot_error or "",
-                "recording_error": camera.recording_error or "",
-            })
+            attributes["snapshot_error"] = camera.snapshot_error or ""
         return attributes

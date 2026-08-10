@@ -1,13 +1,11 @@
-"""Render a private site mapping to Lovelace YAML or M5C telemetry JSON."""
+"""Render a private site mapping to Lovelace YAML."""
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 from pathlib import Path
 import re
-import sys
 from typing import Any
 
 
@@ -30,17 +28,6 @@ _LOCAL_PING_SCHEMA = {
 
 def _invalid() -> ValueError:
     return ValueError("invalid mapping")
-
-
-def _m5c_parse(items: list[dict[str, Any]]) -> bool:
-    path = Path(__file__).parents[1] / "custom_components/nine_space_nvr_monitor/ha_telemetry.py"
-    spec = importlib.util.spec_from_file_location("_m5c_mapping", path)
-    if spec is None or spec.loader is None:
-        return False
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module.parse_mapping(items) is not None
 
 
 def _label(value: object) -> str:
@@ -73,7 +60,6 @@ def validate_mapping(raw: object) -> dict[str, Any]:
         raise _invalid()
     seen_channel: set[int] = set()
     seen_entity: set[str] = set()
-    telemetry: list[dict[str, Any]] = []
     normalized_channels: list[dict[str, Any]] = []
     for channel in channels:
         if not isinstance(channel, dict) or set(channel) != {"channel_id", "label", "nvr_entities", "ping"}:
@@ -115,17 +101,9 @@ def validate_mapping(raw: object) -> dict[str, Any]:
         if entity_id in seen_entity:
             raise _invalid()
         seen_entity.add(entity_id)
-        telemetry.append(dict(item))
         normalized_diagnostics.append(dict(item))
-    if telemetry and not _m5c_parse(telemetry):
-        raise _invalid()
-    telemetry.sort(key=lambda item: (item["kind"], item["metric"], item["channel_id"] or 0))
     normalized_diagnostics.sort(key=lambda item: (item["kind"], item["metric"], item["channel_id"] or 0))
-    return {"site_id": site_id, "display_name": display_name, "channels": sorted(normalized_channels, key=lambda item: item["channel_id"]), "diagnostics": normalized_diagnostics, "telemetry": telemetry}
-
-
-def telemetry_json(raw: object) -> str:
-    return json.dumps(validate_mapping(raw)["telemetry"], ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    return {"site_id": site_id, "display_name": display_name, "channels": sorted(normalized_channels, key=lambda item: item["channel_id"]), "diagnostics": normalized_diagnostics}
 
 
 def _lovelace_view_lines(mapping: dict[str, Any]) -> list[str]:
@@ -192,7 +170,7 @@ def main() -> int:
     parser.add_argument("mapping", type=Path)
     parser.add_argument(
         "--format",
-        choices=("lovelace", "lovelace-view", "telemetry"),
+        choices=("lovelace", "lovelace-view"),
         default="lovelace",
     )
     args = parser.parse_args()
@@ -201,7 +179,6 @@ def main() -> int:
         renderer = {
             "lovelace": lovelace_yaml,
             "lovelace-view": lovelace_view_yaml,
-            "telemetry": telemetry_json,
         }[args.format]
         sys.stdout.write(renderer(raw))
     except (OSError, ValueError, json.JSONDecodeError):

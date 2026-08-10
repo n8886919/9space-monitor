@@ -189,7 +189,7 @@ class ChannelStoreTests(unittest.TestCase):
         self.assertIsNone(state["last_recording"])
         self.assertEqual(state["error_code"], "internal_error")
 
-    def test_recording_failure_clears_previous_telemetry_aggregates(self) -> None:
+    def test_recording_failure_clears_previous_local_api_aggregates(self) -> None:
         store = ChannelStateStore()
 
         async def run() -> None:
@@ -205,7 +205,9 @@ class ChannelStoreTests(unittest.TestCase):
             )
 
         asyncio.run(run())
-        self.assertEqual(store.telemetry_snapshot(1)["recording"]["metrics"], {})
+        state = store.snapshot(1)
+        self.assertIsNone(state["recording_files_24h"])
+        self.assertIsNone(state["recording_coverage_24h"])
 
 
 class LiveProbeUnitTests(unittest.TestCase):

@@ -11,14 +11,13 @@
   },
   "entity": {
     "binary_sensor": {
-      "live_video": {"name": "Live video"},
-      "recording_query_ok": {"name": "Recording query"},
-      "recording_recent": {"name": "Recording within 24h"},
       "snapshot_success": {"name": "Snapshot attempt"}
     },
     "sensor": {
-      "recording_files_24h": {"name": "Recording files 24h"},
-      "recording_coverage_24h": {"name": "Recording coverage 24h"},
+      "snapshot_success_rate": {"name": "Snapshot success rate"},
+      "snapshot_success_count": {"name": "Snapshot successes"},
+      "snapshot_failure_count": {"name": "Snapshot failures"},
+      "snapshot_consecutive_failures": {"name": "Consecutive snapshot failures"},
       "snapshot_latency": {"name": "Snapshot latency"},
       "snapshot_age": {"name": "Snapshot age"},
       "last_recording": {"name": "Last recording"},

@@ -19,9 +19,6 @@ class HubBinaryDescription(BinarySensorEntityDescription):
 
 
 DESCRIPTIONS = (
-    HubBinaryDescription(key="live_video", translation_key="live_video", value_fn=lambda camera: camera.live_video),
-    HubBinaryDescription(key="recording_query_ok", translation_key="recording_query_ok", value_fn=lambda camera: camera.recording_query_ok),
-    HubBinaryDescription(key="recording_recent", translation_key="recording_recent", value_fn=lambda camera: camera.recording_recent),
     HubBinaryDescription(key="snapshot_success", translation_key="snapshot_success", value_fn=lambda camera: camera.snapshot_success),
 )
 

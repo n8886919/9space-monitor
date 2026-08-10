@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -44,20 +43,6 @@ def _timestamp(value: Any) -> int | None:
     return value
 
 
-def _iso_timestamp(value: Any) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str) or len(value) > 64:
-        raise HubInvalidResponse("invalid_iso_timestamp")
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        raise HubInvalidResponse("invalid_iso_timestamp") from None
-    if parsed.tzinfo is None:
-        raise HubInvalidResponse("invalid_iso_timestamp")
-    return value
-
-
 def _optional_bool(value: Any) -> bool | None:
     if value is not None and type(value) is not bool:
         raise HubInvalidResponse("invalid_boolean")
@@ -92,15 +77,10 @@ class HubCamera:
     snapshot_timestamp_ms: int | None
     snapshot_latency_ms: float | None
     snapshot_error: str | None
-    live_video: bool | None
-    live_checked_at: str | None
-    recording_query_ok: bool | None
-    recording_recent: bool | None
-    last_recording: str | None
-    recording_checked_at: str | None
-    recording_files_24h: int | None
-    recording_coverage_24h: float | None
-    recording_error: str | None
+    snapshot_success_count: int
+    snapshot_failure_count: int
+    snapshot_consecutive_failures: int
+    snapshot_success_rate: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +113,12 @@ def parse_sites(payload: Any) -> dict[str, HubSite]:
         for raw in cameras_raw:
             if not isinstance(raw, dict):
                 raise HubInvalidResponse("invalid_camera")
+            if set(raw) != {
+                "camera_id", "label", "snapshot_available", "last_good_age_seconds",
+                "latest_attempt", "snapshot_success_count", "snapshot_failure_count",
+                "snapshot_consecutive_failures", "snapshot_success_rate",
+            }:
+                raise HubInvalidResponse("invalid_camera_contract")
             camera_id = raw.get("camera_id")
             label = raw.get("label")
             if type(camera_id) is not int or not 1 <= camera_id <= 4096 or camera_id in seen:
@@ -145,10 +131,7 @@ def parse_sites(payload: Any) -> dict[str, HubSite]:
                 raise HubInvalidResponse("invalid_snapshot_attempt")
             attempt = attempt or {}
             error = attempt.get("error_code")
-            recording_error = raw.get("recording_error")
             if error is not None and not isinstance(error, str):
-                raise HubInvalidResponse("invalid_error_code")
-            if recording_error is not None and not isinstance(recording_error, str):
                 raise HubInvalidResponse("invalid_error_code")
             snapshot_available = raw.get("snapshot_available")
             if type(snapshot_available) is not bool:
@@ -164,15 +147,10 @@ def parse_sites(payload: Any) -> dict[str, HubSite]:
                 snapshot_timestamp_ms=_timestamp(attempt.get("timestamp")),
                 snapshot_latency_ms=_optional_number(attempt.get("latency_ms"), 0, 3_600_000),
                 snapshot_error=error,
-                live_video=_optional_bool(raw.get("live_video")),
-                live_checked_at=_iso_timestamp(raw.get("live_checked_at")),
-                recording_query_ok=_optional_bool(raw.get("recording_query_ok")),
-                recording_recent=_optional_bool(raw.get("recording_recent")),
-                last_recording=_iso_timestamp(raw.get("last_recording")),
-                recording_checked_at=_iso_timestamp(raw.get("recording_checked_at")),
-                recording_files_24h=_optional_int(raw.get("recording_files_24h"), 0, 10_000_000),
-                recording_coverage_24h=_optional_number(raw.get("recording_coverage_24h"), 0, 100),
-                recording_error=recording_error,
+                snapshot_success_count=_optional_int(raw.get("snapshot_success_count"), 0, 10**12) or 0,
+                snapshot_failure_count=_optional_int(raw.get("snapshot_failure_count"), 0, 10**12) or 0,
+                snapshot_consecutive_failures=_optional_int(raw.get("snapshot_consecutive_failures"), 0, 10**12) or 0,
+                snapshot_success_rate=_optional_number(raw.get("snapshot_success_rate"), 0, 100),
             ))
         result[site_id] = HubSite(site_id, display_name, _timestamp(raw_site.get("updated_at")), tuple(cameras))
     return result

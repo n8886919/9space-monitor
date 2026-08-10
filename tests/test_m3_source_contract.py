@@ -170,7 +170,7 @@ class M3SourceContractTests(unittest.TestCase):
         coordinator = (INTEGRATION / "coordinator.py").read_text()
         history = (INTEGRATION / "live_history.py").read_text()
         addon_state = (ROOT / "nine_space_snapshot/channel_state.py").read_text()
-        addon_telemetry = (ROOT / "nine_space_snapshot/telemetry.py").read_text()
+        hub_registration = (ROOT / "nine_space_snapshot/hub_registration.py").read_text()
         self.assertIn("LiveHistoryStore", coordinator)
         self.assertIn("LIVE_WINDOW_MS", history)
         integration = (INTEGRATION / "__init__.py").read_text()
@@ -179,8 +179,9 @@ class M3SourceContractTests(unittest.TestCase):
         self.assertIn("history.get_significant_states", recorder_history)
         self.assertIn("async_add_executor_job", recorder_history)
         self.assertNotIn("_live_samples", addon_state)
-        self.assertNotIn("_live_samples", addon_telemetry)
-        self.assertNotIn("disconnect_count_24h", addon_telemetry)
+        self.assertNotIn("_live_samples", hub_registration)
+        self.assertNotIn("disconnect_count_24h", hub_registration)
+        self.assertNotIn("recording_", hub_registration)
 
     def test_nvr_integration_has_no_hub_telemetry_runtime(self):
         init = (INTEGRATION / "__init__.py").read_text()

@@ -81,4 +81,8 @@ class SchedulerTests(unittest.TestCase):
             attempt = state.sites(store, max_stale_seconds=120)[0]["cameras"][0]["latest_attempt"]
             self.assertIs(attempt["success"], False)
             self.assertEqual(attempt["error_code"], "snapshot_unavailable")
+            camera = state.sites(store, max_stale_seconds=120)[0]["cameras"][0]
+            self.assertEqual(camera["snapshot_success_rate"], 50.0)
+            self.assertEqual((camera["snapshot_success_count"], camera["snapshot_failure_count"]), (1, 1))
+            self.assertEqual(camera["snapshot_consecutive_failures"], 1)
             self.assertFalse(any(path.suffix in {".db", ".sqlite", ".sqlite3"} for path in store.root.parent.rglob("*")))

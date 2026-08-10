@@ -19,12 +19,12 @@
 
 - `8122` 是獨立舊正式服務，永久禁止操作。
 - 不得對 `8122` 執行 test、restart、rebuild、reload、modify，亦不得把 `8122` 當成 integration URL。
-- 本 repository 的 monorepo app 版本為 `0.3.13`，host port 是 `8222`，container port 是 `8000`。
+- 本 repository 的 monorepo app 版本為 `0.3.14`，host port 是 `8222`，container port 是 `8000`。
 - NVR RTSP／HTTP ports 固定為 `554`／`80`，不再出現在 app options；升級後殘留的舊 keys 由 runtime 忽略。
 - Snapshot app 只能由 HA 已設定的 Supervisor managed repository 安裝與更新；不得以 tar／scp 寫入 local `/addons`，也不得把 local source 當更新失敗時的替代路徑。
 - 舊 Center 已由 `nine_space_hub/` Supervisor app 取代；Hub 不使用 SQLite 保存狀態歷史，歷史由中央 HA Recorder 保存。
 - Supervisor app identifier／slug 與 internal hostname 不可混用。
-- 唯讀 version gate 只有在 Supervisor 已安裝 app 是 `0.3.13` 時才通過；不得因舊版 endpoint 可用就跳過必要的 repository update。
+- 唯讀 version gate 只有在 Supervisor 已安裝 app 是 `0.3.14` 時才通過；不得因舊版 endpoint 可用就跳過必要的 repository update。
 - 若任務已要求部署，app 的 managed update 或 integration 的 scoped upload、restart 與 verify 可依本文件連續完成；操作 `8122`、`.storage`、destructive rollback、schema／auth 或 public exposure 仍須另行明確確認。
 - 不得直接編輯 `/config/.storage/core.config_entries` 或其他 `.storage` 檔案。
 - 不得自動建立或接受帶有 `_2` 後綴的 replacement entities。
@@ -45,7 +45,7 @@ export INTEGRATION_DOMAIN="nine_space_nvr_monitor"
 export INTEGRATION_REMOTE_DIR="/config/custom_components/${INTEGRATION_DOMAIN}"
 
 export ADDON_SLUG="<actual-supervisor-addon-slug>"
-export ADDON_TARGET_VERSION="0.3.13"
+export ADDON_TARGET_VERSION="0.3.14"
 export ADDON_HOSTNAME="afa94ae2-9space-snapshot"
 export ADDON_HOST_PORT="8222"
 export ADDON_CONTAINER_PORT="8000"
@@ -60,7 +60,7 @@ export INTEGRATION_BASE_URL="http://${ADDON_HOSTNAME}:${ADDON_CONTAINER_PORT}"
 - `ADDON_HOSTNAME`：只供 Home Assistant Core 連到 app container。
 - `ADDON_HOST_PORT`：只供 host-side smoke test。
 - `ADDON_CONTAINER_PORT`：app container 內固定監聽 port，現值 `8000`。
-- `INTEGRATION_BASE_URL`：integration 應填入 `http://${ADDON_HOSTNAME}:8000`。
+- `INTEGRATION_BASE_URL`：只供部署驗證；integration runtime 使用固定 internal URL，UI 不提供此欄位。
 
 不要把真實 IP、password、SSH private key 或 NVR credentials 寫入本文件、prompt 或 commit。
 
@@ -110,7 +110,7 @@ Hub app 由同一 Supervisor managed repository 的 `nine_space_hub/`
 `9space_hub`；不得用 SSH 複製到 local `/addons`。
 
 Hub options 只保留全域 freshness、refresh interval 與 snapshot store 限制。每站
-Snapshot app 只需設定一個 `hub_ip`，scheme、port `8765` 與 telemetry path 固定。
+Snapshot app 只需設定一個 `hub_ip`，scheme、port `8765` 與 registration path 固定。
 它直接查詢 Tailscale resolver，不依賴 container system DNS；同機 Hub 自動使用
 Supervisor internal hostname。Hub 從實際 Tailscale peer 或 registration 中自動解析且
 驗證的 site address 推導固定 port `8222`，使用者不填站點 IP／URL。
@@ -127,16 +127,16 @@ ha core check
 
 只有 `ha core check` PASS 才 restart。Component config entry 必須由使用者在 HA UI
 新增並填入 `http://<actual-hub-hostname>:8765`；不得直接編輯 `.storage`。Hub app
-保留每鏡頭一張 last-good JPEG；current telemetry／snapshot attempt 只在 RAM，HA
+保留每鏡頭一張 last-good JPEG；snapshot attempt／counter 只在 RAM，HA
 Recorder 是狀態歷史唯一持有者。
 
 ## 唯讀 preflight／smoke／observation（預設）
 
 Snapshot API smoke test 是 local app 與 Hub 的 contract 驗證；`nine_space_nvr_monitor` 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
 
-只有 Supervisor 已安裝版本明確為 `0.3.13`，且以下唯讀檢查都正常時，才可跳過 app repository update：
+只有 Supervisor 已安裝版本明確為 `0.3.14`，且以下唯讀檢查都正常時，才可跳過 app repository update：
 
-- `ha apps info "$ADDON_SLUG"` 顯示 version `0.3.13`
+- `ha apps info "$ADDON_SLUG"` 顯示 version `0.3.14`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/healthz`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/camera/1`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/api/v1/channels`
@@ -373,7 +373,7 @@ filter_logs_after_marker() {
 
 ### 1. 上傳 integration
 
-Snapshot app `0.3.13` 需要 integration `0.2.9` 或更新版本，才能讀取錄影缺口與
+Snapshot app `0.3.14` 需要 integration `0.2.9` 或更新版本，才能讀取錄影缺口與
 RTSP timing diagnostics；`live_checked_at` 仍由 integration-owned 24 小時 RAM ring 使用。Integration `0.2.11`
 在啟動時透過 Recorder 的 read-only executor API 重建最近 24 小時 window；不建立
 第二份磁碟 history，app 與 Hub 仍不接收在線率或斷線次數。Integration runtime
@@ -592,7 +592,7 @@ REMOTE_SCRIPT
 
 Rollback 使用相同 helper；還原 integration source 後必須先通過 `ha core check` 才能重新啟動 Core。驗證完成後，以前述相同 path gate 清除原 deployment 與 rollback transaction，不在 `custom_components` 留 artifact。
 
-舊 entry data 若仍含 `addon_base_url`，0.2.10 runtime 會忽略它；不得直接覆寫或編輯
+舊 entry data 若仍含 `addon_base_url`，0.2.11 runtime 會忽略它；不得直接覆寫或編輯
 `.storage`。使用者日後經 UI Reconfigure 儲存時，該舊 key 會自然移除，entity identity
 不變。
 

@@ -11,14 +11,13 @@
   },
   "entity": {
     "binary_sensor": {
-      "live_video": {"name": "即時影像"},
-      "recording_query_ok": {"name": "錄影查詢"},
-      "recording_recent": {"name": "24 小時內有錄影"},
       "snapshot_success": {"name": "截圖嘗試"}
     },
     "sensor": {
-      "recording_files_24h": {"name": "24 小時錄影檔數"},
-      "recording_coverage_24h": {"name": "24 小時錄影覆蓋率"},
+      "snapshot_success_rate": {"name": "截圖成功率"},
+      "snapshot_success_count": {"name": "截圖成功次數"},
+      "snapshot_failure_count": {"name": "截圖失敗次數"},
+      "snapshot_consecutive_failures": {"name": "連續截圖失敗"},
       "snapshot_latency": {"name": "截圖延遲"},
       "snapshot_age": {"name": "截圖年齡"},
       "last_recording": {"name": "上次錄影"},

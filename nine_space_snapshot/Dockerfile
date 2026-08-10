@@ -15,7 +15,7 @@ COPY channel_state.py /app/channel_state.py
 COPY constants.py /app/constants.py
 COPY live_probe.py /app/live_probe.py
 COPY recording_query.py /app/recording_query.py
-COPY telemetry.py /app/telemetry.py
+COPY hub_registration.py /app/hub_registration.py
 COPY log_config.json /app/log_config.json
 COPY run.sh /run.sh
 RUN chmod +x /run.sh

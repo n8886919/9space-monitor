@@ -1,5 +1,5 @@
 name: 9Space Snapshot
-version: "0.3.13"
+version: "0.3.14"
 slug: 9space_snapshot
 description: >-
   Monorepo development instance of the 9Space local API. Adds /healthz and
@@ -30,8 +30,6 @@ options:
   hub_ip: ""
   site_id: "chengde"
   site_display_name: "承德"
-  telemetry_interval_seconds: 300
-  telemetry_queue_max_batches: 100
 
 schema:
   nvr_host: str
@@ -45,5 +43,3 @@ schema:
   hub_ip: str
   site_id: str
   site_display_name: str
-  telemetry_interval_seconds: int
-  telemetry_queue_max_batches: int

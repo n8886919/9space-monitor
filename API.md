@@ -5,10 +5,10 @@
 此 API 是：
 
 - Home Assistant integration 與同站點 app 的狀態邊界。
-- M5 app／integration 透過 Tailscale push sanitized telemetry 到 Hub 的相容基礎。
+- Snapshot app 透過 Tailscale 向 Hub 註冊 snapshot site/channel 的契約。
 - 目前正在使用的舊 snapshot client 的相容介面。
 
-Hub telemetry ingest API 與 legacy snapshot API、local integration API 分離，且不修改同事現有呼叫方式。
+Hub snapshot registration API 與 legacy snapshot API、local integration API 分離，且不修改同事現有呼叫方式。
 
 ## 網路決策
 
@@ -22,7 +22,7 @@ Hub telemetry ingest API 與 legacy snapshot API、local integration API 分離�
 安全債務：
 
 - 公網 port forwarding 不是最終架構。
-- M5 app 與 integration 透過 Tailscale push telemetry 到 Hub。
+- Snapshot app 只透過 Tailscale註冊站點；Hub 再經站點 app snapshot API 拉圖。
 - 中央 Home Assistant component 只呼叫 Hub。
 - 同事完成切換後，移除 local API 的不必要公網 port forwarding。
 - M5 為受控 Tailscale 內網，不新增 per-site token；Hub 不得暴露至公網。
@@ -58,7 +58,7 @@ Hub telemetry ingest API 與 legacy snapshot API、local integration API 分離�
 
 ## Minimal local API
 
-新 endpoint 只提供 integration 必需的資料；Hub telemetry 不從此 endpoint pull 資料。
+新 endpoint 只提供 local integration 必需的資料；Hub 除 snapshot endpoint 外不讀取 channel state。
 
 ### `GET /healthz`
 
@@ -229,47 +229,34 @@ Snapshot 保持由 app demand-driven capture 與 cache 提供。M5F 起 `max_con
 - Legacy API 在同事完成 Hub migration 前保持不變。
 - `/api/v1` 可以增加 optional 欄位。
 - 不刪除或重新命名既有 `/api/v1` 欄位，除非同步修改 integration 並記錄 breaking change。0.3.8 已同步把 live 24 小時 aggregates 移至 integration。
-- local `/api/v1` 不加入 Hub-specific path、site registry 或 multi-site schema；Hub 使用獨立 telemetry ingest contract。
+- local `/api/v1` 不加入 Hub-specific path、site registry 或 multi-site schema；Hub 使用獨立 snapshot registration contract。
 
-## Hub current telemetry contract
+## Hub snapshot registration contract
 
-Hub 接收既有兩類 sanitized batch，皆不含 JPEG、credentials、Authorization、完整
-RTSP/CGI URL、raw CGI body、snapshot body、Home Assistant entity ID 或 Ping：
+Hub 不接收 NVR live／recording current state、Home Assistant telemetry、Ping 或 entity ID。
+Snapshot app 只定期註冊 Hub 拉圖所需的 bounded metadata；registration 不含 JPEG、
+credentials、Authorization、RTSP/CGI URL、raw body 或 snapshot body。
 
-1. App NVR telemetry：channel 當下 live/recording 狀態、最新 recording query
-   aggregates、probe/query/snapshot metadata 與 allowlisted diagnostics。
-2. Integration HA telemetry：allowlisted System Monitor、RPi Power、Fast.com 當下狀態。
+### `POST /api/v1/snapshot-sites/register`
 
-Hub 驗證後只在 RAM 保存每個 `site/source/kind/channel` 最新一筆。它不使用 SQLite、
-不提供 events/export API、不計算 rolling history。Hub restart 後由 producer 重新填入。
-Hub component 將 channel 當下狀態映射為 Home Assistant entities，狀態歷史與
-statistics 由 Home Assistant Recorder 負責。
+嚴格 payload 只包含：
 
-Producer 規則：
+- `site_id`、`display_name`
+- `channels`
+- bounded `concurrency`、`timeout_seconds`
+- `site_ip`（只有 Supervisor NAT 隱藏實際 Tailscale peer 時使用；可為 `null`）
 
-- 非阻塞、短 timeout；Hub 失聯不得影響 NVR probe、integration coordinator 或 HA startup。
-- producer 不保存 telemetry history；只保有 bounded memory queue。
-- queue 滿或 server 不可達時允許丟棄資料，並以 sanitized counter metadata 回報。
-- `site_id` 為穩定 ASCII identifier，display name 另存。
-- HA Ping、RTT、packet loss、在線率與斷線次數繼續只留各站 local HA。
-
-### `POST /api/v1/telemetry`
-
-沿用既有 producer payload。Snapshot app 可附加嚴格驗證的
-`snapshot_registration`，Hub 先在 RAM 註冊／更新站點，再接受同一批 events；
-integration producer 不得附加此欄位。註冊不寫入磁碟，Hub restart 後由 producer
-下一批重新建立。registration 只包含 channels、concurrency、timeout 與 app
-自動解析的 Tailscale site address，不接受 URL，也不在 discovery API、logs 或狀態
-輸出該 address。Hub 以未套用 proxy headers 的實際 Tailscale TCP peer，加固定 port
-`8222` 建立 Snapshot API origin。Supervisor NAT 隱藏 peer 時使用已驗證的
-registration address；同機 site 使用 Supervisor internal Snapshot hostname。
-無法安全驗證時回 `422`。
+不接受 URL、events、live/recording fields 或額外欄位。Hub 以未套用 proxy headers 的
+實際 Tailscale TCP peer 加固定 port `8222` 建立 Snapshot API origin；Supervisor NAT
+隱藏 peer 時使用已驗證的 `site_ip`，同機 site 使用 Supervisor internal Snapshot
+hostname。無法安全驗證時回 `422`。註冊只留 RAM；Hub restart 後由 Snapshot app
+下一輪重新建立。Hub 失聯不得影響 local NVR probe、recording query 或 snapshot API。
 
 ### `GET /api/v1/sites`
 
-供 `nine_space_hub` component discovery 與 polling。只回已註冊站點、camera
-mapping、最新 live／recording／snapshot attempt 與 last-good age；不回歷史統計、
-private site URL、credentials、JPEG body 或 telemetry export。
+供 `nine_space_hub` component discovery 與 polling。只回已註冊站點、camera mapping、
+最新 snapshot attempt、last-good age、since-restart 成功／失敗 counters 與成功率；
+不回 private site URL、NVR current state、credentials、JPEG body 或 history/export。
 
 ## Hub snapshot contract
 
@@ -293,9 +280,9 @@ capture margin 換算，refresh 使用 Hub 全域 `snapshot_refresh_seconds`。�
 concurrency 4：
 `4/4/4/1`，完成一輪後等待 refresh interval。
 
-每次 snapshot attempt 只在 RAM 保存最新成功、timestamp、latency 與去敏 error code；
-component 以 binary sensor／sensor 導入 Recorder。Hub snapshot store 僅保存每個
-site/channel 一張 last-good JPEG，使用 atomic replace，不保存 history。
+每次 snapshot attempt 只在 RAM 保存最新結果、timestamp、latency、去敏 error code、
+since-restart counters 與成功率；component 以 sensor 導入 Recorder。Hub snapshot
+store 僅保存每個 site/channel 一張 last-good JPEG，使用 atomic replace，不保存 history。
 
 ## Future TODO
 
@@ -303,7 +290,7 @@ site/channel 一張 last-good JPEG，使用 atomic replace，不保存 history�
 - [x] 依每站 mapping 產生 dashboard YAML renderer（M5D）。
 - [x] Ping (ICMP) 僅產生 Home Assistant local Lovelace／statistics cards，不進 Hub。
 - [x] Hub 最新 snapshot API、bounded store/scheduler 與 debug UI；未修改 legacy local endpoint。
-- [x] Hub component camera／current-state entities；歷史交由 Recorder。
+- [x] Hub component snapshot camera／attempt/counter entities；歷史交由 Recorder。
 - [ ] 同事完成切換後，停止直接呼叫 local legacy API。
 - [ ] 移除 local API 的不必要公網 port forwarding。
 - [ ] 評估 Tailscale ACL、service identity 或 API token。

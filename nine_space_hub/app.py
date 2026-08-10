@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from .scheduler import SnapshotScheduler, SnapshotSite, load_options
 from .snapshots import SnapshotStore, validate_camera_id
 from .state import CurrentState
-from .validation import MAX_BODY_BYTES, TelemetryValidationError, validate_batch, validate_site_id
+from .validation import MAX_BODY_BYTES, RegistrationValidationError, validate_registration, validate_site_id
 
 OPTIONS_PATH = "/data/options.json"
 SNAPSHOT_ROOT = (
@@ -108,7 +108,7 @@ def create_app(
         finally:
             await scheduler.stop()
 
-    app = FastAPI(title="9Space Hub", version="0.3.2", lifespan=lifespan)
+    app = FastAPI(title="9Space Hub", version="0.3.3", lifespan=lifespan)
     app.state.run_sync = run_sync or asyncio.to_thread
     app.state.snapshots = snapshot_store
     app.state.current = current_state
@@ -133,8 +133,8 @@ def create_app(
             },
         )
 
-    @app.post("/api/v1/telemetry")
-    async def ingest(request: Request) -> JSONResponse:
+    @app.post("/api/v1/snapshot-sites/register")
+    async def register_snapshot_site(request: Request) -> JSONResponse:
         content_type = request.headers.get("content-type", "").split(";", 1)[0].strip()
         if content_type != "application/json":
             raise HTTPException(status_code=415, detail="application_json_required")
@@ -151,32 +151,24 @@ def create_app(
                 raise HTTPException(status_code=413, detail="request_body_too_large")
             body.extend(chunk)
         try:
-            batch = validate_batch(json.loads(body))
+            registration = validate_registration(json.loads(body))
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="invalid_json") from None
-        except TelemetryValidationError as err:
+        except RegistrationValidationError as err:
             raise HTTPException(status_code=422, detail=str(err)) from None
-        if batch.snapshot_registration is not None:
-            registration = batch.snapshot_registration
-            site = SnapshotSite(
-                batch.site_id,
-                batch.display_name,
-                _snapshot_base_from_request(
-                    request, batch.site_id, registration.site_ip
-                ),
-                registration.channels,
-                registration.concurrency,
-                registration.timeout_seconds,
-                refresh_seconds,
-            )
-            if not request.app.state.current.register(site):
-                raise HTTPException(status_code=422, detail="site_limit_reached")
-            await request.app.state.scheduler.upsert(site)
-        try:
-            accepted = request.app.state.current.ingest(batch)
-        except KeyError:
-            raise HTTPException(status_code=404, detail="unknown_site") from None
-        return JSONResponse({"accepted": accepted})
+        site = SnapshotSite(
+            registration.site_id,
+            registration.display_name,
+            _snapshot_base_from_request(request, registration.site_id, registration.site_ip),
+            registration.channels,
+            registration.concurrency,
+            registration.timeout_seconds,
+            refresh_seconds,
+        )
+        if not request.app.state.current.register(site):
+            raise HTTPException(status_code=422, detail="site_limit_reached")
+        await request.app.state.scheduler.upsert(site)
+        return JSONResponse({"registered": True})
 
     @app.get("/api/v1/sites")
     async def sites_endpoint(request: Request) -> JSONResponse:
@@ -211,7 +203,7 @@ def create_app(
         try:
             validate_site_id(site_id)
             validate_camera_id(camera_id)
-        except (TelemetryValidationError, ValueError):
+        except (RegistrationValidationError, ValueError):
             return JSONResponse(status_code=404, content={"error_code": "snapshot_not_found"})
         if not request.app.state.current.has_camera(site_id, camera_id):
             return JSONResponse(status_code=404, content={"error_code": "snapshot_not_found"})
@@ -240,7 +232,7 @@ def create_app(
         try:
             validate_site_id(site_id)
             validate_camera_id(camera_id)
-        except (TelemetryValidationError, ValueError):
+        except (RegistrationValidationError, ValueError):
             return JSONResponse(status_code=404, content={"error_code": "snapshot_not_found"})
         content = await call_sync(request, request.app.state.snapshots.read_last_good, site_id, camera_id)
         if content is None:
