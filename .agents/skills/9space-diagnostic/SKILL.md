@@ -1,6 +1,6 @@
 ---
 name: 9space-diagnostic
-description: Use for read-only SSH audits of Home Assistant, nvr_monitor, add-on, Center, or DMSS/Dahua video-loss evidence; classify failed layers and entity usefulness without changing configuration, services, entities, or stored data.
+description: Use for read-only SSH audits of Home Assistant, nine_space_nvr_monitor, app, Hub, or DMSS/Dahua video-loss evidence; classify failed layers and entity usefulness without changing configuration, services, entities, or stored data.
 ---
 
 # 9Space read-only video diagnostics
@@ -17,7 +17,7 @@ Treat the repository, live target, site mapping, versions, channel count, entity
 - Never operate or probe protected legacy service `8122`. Use only the current user-supplied monorepo target; stop if host or port is ambiguous.
 - Do not modify Home Assistant `.storage`. Query only the minimum non-secret metadata needed for the audit.
 - Never print or save credentials, tokens, cookies, private keys, private URLs, full RTSP／CGI URLs, raw diagnostic payloads, JPEG bodies, or footage.
-- Do not call Dahua CGI, construct NVR RTSP URLs, or run NVR ffmpeg from Home Assistant. Read the add-on’s sanitized state instead.
+- Do not call Dahua CGI, construct NVR RTSP URLs, or run NVR ffmpeg from Home Assistant. Read the app’s sanitized state instead.
 - Keep temporary sanitized output under `/tmp`; remove it when the audit finishes.
 - Label every conclusion as `OBSERVED`, `INFERENCE`, or `BLOCKED`.
 - Use at least two independent evidence layers before naming a root cause.
@@ -28,7 +28,7 @@ Prefer, in order:
 
 1. Current observation timestamp and user-supplied target.
 2. Live Home Assistant config-entry metadata, entity registry, and states.
-3. Current installed `nvr_monitor` source and add-on sanitized API responses.
+3. Current installed `nine_space_nvr_monitor` source and app sanitized API responses.
 4. Logs from the current observation window.
 5. Current repository code, tests, `API.md`, and explicit site mapping.
 
@@ -37,17 +37,17 @@ Do not treat an old YAML file, filename, entity naming pattern, prior report, or
 ## Evidence layers
 
 1. **HA Ping integration** — reachability and optional RTT／loss metadata. It does not prove video or recording.
-2. **Add-on process/API** — `/healthz` proves the service responds, not that the NVR works.
-3. **NVR live-video state** — sanitized add-on channel state backed by RTSP control and advancing RTP evidence. It does not prove recording.
+2. **App process/API** — `/healthz` proves the service responds, not that the NVR works.
+3. **NVR live-video state** — sanitized app channel state backed by RTSP control and advancing RTP evidence. It does not prove recording.
 4. **Recording state** — recording-query success, last recording, coverage, gaps, and checked time. Query failure is not confirmed no recording.
-5. **Producer/Center metadata** — queue/drop, event freshness, snapshot-attempt success/error/latency. Never inspect snapshot bytes.
+5. **Producer/Hub metadata** — queue/drop, event freshness, snapshot-attempt success/error/latency. Never inspect snapshot bytes.
 6. **Network/Omada evidence** — association, RSSI/SNR, retries, roaming, VLAN, AP, and uplink evidence. Ping alone is insufficient to blame Wi-Fi.
 
 ## Audit procedure
 
 ### 1. Establish scope and time
 
-Confirm the supplied host, SSH port, expected add-on port, site alias, requested channels, and read-only scope. Record the observation window in Asia/Taipei.
+Confirm the supplied host, SSH port, expected app port, site alias, requested channels, and read-only scope. Record the observation window in Asia/Taipei.
 
 Run only safe status commands relevant to the task, for example:
 
@@ -58,7 +58,7 @@ ha supervisor info
 ha apps list
 ```
 
-Verify paths before reading them. Do not assume `/config`, `/addons`, or an add-on slug.
+Verify paths before reading them. Do not assume `/config`, `/addons`, or an app slug.
 
 ### 2. Inspect config entries without values
 
@@ -67,7 +67,7 @@ If `jq` is available, emit only non-secret metadata and data/options key names:
 ```bash
 jq '
   .data.entries[]
-  | select((.domain // "") | test("nvr_monitor|ping|dahua"; "i"))
+  | select((.domain // "") | test("nine_space_nvr_monitor|ping|dahua"; "i"))
   | {
       entry_id,
       domain,
@@ -86,7 +86,7 @@ If the schema differs, adapt the query while preserving the no-values restrictio
 
 ### 3. Inventory relevant entities
 
-Read registry ownership, enabled state, and exact entity IDs for `nvr_monitor`, Home Assistant Ping, and task-relevant diagnostics. Registry presence does not prove current availability.
+Read registry ownership, enabled state, and exact entity IDs for `nine_space_nvr_monitor`, Home Assistant Ping, and task-relevant diagnostics. Registry presence does not prove current availability.
 
 Obtain live states through an already available authenticated mechanism. Never ask the user to paste a token and never echo an existing token. Save only the minimum selected fields:
 
@@ -97,22 +97,22 @@ Obtain live states through an already available authenticated mechanism. Never a
 
 If live states are unavailable, mark availability and duration claims `BLOCKED`; do not substitute registry data.
 
-### 4. Read sanitized add-on and Center evidence
+### 4. Read sanitized app and Hub evidence
 
 Confirm the current port is the authorized monorepo target and is not `8122`. Query only endpoints needed by the incident:
 
 - `/healthz`
 - `/api/v1/channels`
 - `/api/v1/channels/{channel_id}`
-- Center metadata/query endpoints when Center freshness or producer health is relevant
+- Hub metadata/query endpoints when Hub freshness or producer health is relevant
 
 Do not request or view snapshot/JPEG bodies. For snapshot diagnosis, use attempt metadata only.
 
-Distinguish workstation host-port reachability, SSH-session localhost, Home Assistant add-on hostname, and Center/Tailscale routes. Failure in one namespace is not proof that another is unhealthy.
+Distinguish workstation host-port reachability, SSH-session localhost, Home Assistant app hostname, and Hub/Tailscale routes. Failure in one namespace is not proof that another is unhealthy.
 
 ### 5. Inspect current source and logs
 
-Inspect only the installed component files needed to map entities to producers. Confirm whether each signal comes from HA Ping, the integration, the add-on, or Center; do not infer from its name.
+Inspect only the installed component files needed to map entities to producers. Confirm whether each signal comes from HA Ping, the integration, the app, or Hub; do not infer from its name.
 
 Filter logs to the current observation window and relevant component. Summarize sanitized errors rather than reproducing complete log lines. Do not treat pre-restart history as evidence for a current run.
 
@@ -137,10 +137,10 @@ Never call an entity deletable merely because it is off, unavailable once, disab
 ## Interpretation guide
 
 - Ping down: investigate power, association, VLAN/LAN path, or addressing; require network evidence.
-- Ping up + add-on live-video down: investigate the NVR channel/control/RTP path; do not infer a camera Wi-Fi cause without independent evidence.
+- Ping up + app live-video down: investigate the NVR channel/control/RTP path; do not infer a camera Wi-Fi cause without independent evidence.
 - Live-video up + recording stale: investigate recording rules, storage/index path, or query behavior.
-- Live-video up + DMSS no video: the add-on did not reproduce the failure; investigate DMSS permissions, P2P/remote path, decoding/cache, stream selection, or timing.
-- Producer/Center stale while local channel state is current: investigate telemetry queue, route, or Center freshness separately from NVR health.
+- Live-video up + DMSS no video: the app did not reproduce the failure; investigate DMSS permissions, P2P/remote path, decoding/cache, stream selection, or timing.
+- Producer/Hub stale while local channel state is current: investigate telemetry queue, route, or Hub freshness separately from NVR health.
 - Snapshot attempt failure with an existing last-good image: report attempt failure and image age separately; do not inspect the image.
 
 ## Required report
@@ -160,6 +160,6 @@ Report concisely in Chinese:
 Stop and request direction before any action that would:
 
 - change an entity, config entry, YAML, `.storage`, source, credential, channel, schedule, network, ACL, or public exposure;
-- restart/reload/rebuild HA, add-on, NVR, camera, AP, or network equipment;
+- restart/reload/rebuild HA, app, NVR, camera, AP, or network equipment;
 - touch `8122`, download/view footage, or publish/upload diagnostics;
 - require guessing a host, port, slug, channel mapping, entity identity, or live state.

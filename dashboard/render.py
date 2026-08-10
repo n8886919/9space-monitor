@@ -33,7 +33,7 @@ def _invalid() -> ValueError:
 
 
 def _m5c_parse(items: list[dict[str, Any]]) -> bool:
-    path = Path(__file__).parents[1] / "custom_components/nvr_monitor/ha_telemetry.py"
+    path = Path(__file__).parents[1] / "custom_components/nine_space_nvr_monitor/ha_telemetry.py"
     spec = importlib.util.spec_from_file_location("_m5c_mapping", path)
     if spec is None or spec.loader is None:
         return False

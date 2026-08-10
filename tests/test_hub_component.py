@@ -10,7 +10,7 @@ import types
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPONENT = ROOT / "custom_components" / "nine_space_monitor_hub"
+COMPONENT = ROOT / "custom_components" / "nine_space_hub"
 aiohttp = types.ModuleType("aiohttp")
 aiohttp.ClientSession = object
 aiohttp.ClientTimeout = lambda **kwargs: kwargs
@@ -68,7 +68,7 @@ class HubComponentTests(unittest.TestCase):
 
     def test_manifest_and_platforms_expose_recorder_friendly_current_entities(self):
         manifest = json.loads((COMPONENT / "manifest.json").read_text())
-        self.assertEqual(manifest["domain"], "nine_space_monitor_hub")
+        self.assertEqual(manifest["domain"], "nine_space_hub")
         self.assertTrue(manifest["config_flow"])
         const = (COMPONENT / "const.py").read_text()
         self.assertIn('"camera", "binary_sensor", "sensor"', const)

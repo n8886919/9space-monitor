@@ -1,0 +1,49 @@
+name: 9Space Snapshot
+version: "0.3.12"
+slug: 9space_snapshot
+description: >-
+  Monorepo development instance of the 9Space local API. Adds /healthz and
+  /api/v1 channel endpoints alongside the unchanged legacy snapshot endpoint.
+  Default host port is 8222 (the monorepo dev instance); the independent
+  production instance used by colleagues (separate repo, port 8122) is not
+  affected by this repository.
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: services
+boot: auto
+init: false
+
+ports:
+  8000/tcp: 8222
+
+options:
+  nvr_host: "192.168.0.100"
+  username: "admin"
+  password: "password"
+  subtype: 0
+  health_timeout_ms: 10000
+  jpeg_qv: 32
+  max_concurrency: 1
+  channel_count: 14
+  hub_ip: ""
+  site_id: "chengde"
+  site_display_name: "承德"
+  telemetry_interval_seconds: 300
+  telemetry_queue_max_batches: 100
+
+schema:
+  nvr_host: str
+  username: str
+  password: password
+  subtype: int
+  health_timeout_ms: int
+  jpeg_qv: int
+  max_concurrency: int
+  channel_count: int
+  hub_ip: str
+  site_id: str
+  site_display_name: str
+  telemetry_interval_seconds: int
+  telemetry_queue_max_batches: int

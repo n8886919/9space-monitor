@@ -12,7 +12,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = (ROOT / "DEPLOY.md").read_text()
-DOMAIN = "nvr_monitor"
+DOMAIN = "nine_space_nvr_monitor"
 
 
 def write_manifest(directory: Path, domain: str = DOMAIN) -> None:
@@ -20,7 +20,7 @@ def write_manifest(directory: Path, domain: str = DOMAIN) -> None:
     (directory / "manifest.json").write_text(json.dumps({"domain": domain}))
 
 
-def find_nvr_monitor_manifests(custom_components: Path) -> list[Path]:
+def find_nine_space_nvr_monitor_manifests(custom_components: Path) -> list[Path]:
     """Mirror DEPLOY.md's first-level manifest gate without mutating its input."""
     return [
         child / "manifest.json"
@@ -33,7 +33,7 @@ def find_nvr_monitor_manifests(custom_components: Path) -> list[Path]:
 
 def canonical_layout_is_safe(custom_components: Path) -> bool:
     expected = custom_components / DOMAIN / "manifest.json"
-    return find_nvr_monitor_manifests(custom_components) == [expected]
+    return find_nine_space_nvr_monitor_manifests(custom_components) == [expected]
 
 
 class DeployLayoutSafetyTests(unittest.TestCase):
@@ -52,11 +52,11 @@ class DeployLayoutSafetyTests(unittest.TestCase):
 
     def test_dot_leading_staging_fails(self) -> None:
         write_manifest(self.components / DOMAIN)
-        write_manifest(self.components / ".nvr_monitor.deploy")
+        write_manifest(self.components / ".nine_space_nvr_monitor.deploy")
         self.assertFalse(canonical_layout_is_safe(self.components))
 
     def test_old_and_backup_same_domain_directories_fail(self) -> None:
-        for sibling in ("nvr_monitor.old", "nvr_monitor.bak_20260802"):
+        for sibling in ("nine_space_nvr_monitor.old", "nine_space_nvr_monitor.bak_20260802"):
             with self.subTest(sibling=sibling), tempfile.TemporaryDirectory() as tempdir:
                 components = Path(tempdir) / "custom_components"
                 components.mkdir()
@@ -68,16 +68,16 @@ class DeployLayoutSafetyTests(unittest.TestCase):
         write_manifest(self.components / DOMAIN)
         artifact = (
             self.config
-            / "9space_deploy/nvr-monitor.ABC123/transaction.DEF456/integration_replaced"
+            / "9space_deploy/nine-space-nvr-monitor.ABC123/transaction.DEF456/integration_replaced"
         )
         write_manifest(artifact)
         self.assertTrue(canonical_layout_is_safe(self.components))
 
     def test_document_has_fail_closed_external_artifacts_only(self) -> None:
-        self.assertIn("verify_nvr_monitor_layout", DEPLOY)
+        self.assertIn("verify_nine_space_nvr_monitor_layout", DEPLOY)
         self.assertIn("test \"$count\" -eq 1", DEPLOY)
-        self.assertIn("/config/9space_deploy/nvr-monitor.", DEPLOY)
-        for forbidden in (".nvr_monitor*", "nvr_monitor.old*", "nvr_monitor.bak*"):
+        self.assertIn("/config/9space_deploy/nine-space-nvr-monitor.", DEPLOY)
+        for forbidden in (".nine_space_nvr_monitor*", "nine_space_nvr_monitor.old*", "nine_space_nvr_monitor.bak*"):
             with self.subTest(forbidden=forbidden):
                 self.assertIn(forbidden, DEPLOY)
         self.assertNotIn("$INTEGRATION_REMOTE_DIR.new", DEPLOY)
@@ -98,7 +98,7 @@ class DeployLayoutSafetyTests(unittest.TestCase):
 
     def test_layout_deployment_shell_blocks_parse_in_bash(self) -> None:
         blocks = re.findall(r"```bash\n(.*?)```", DEPLOY, flags=re.DOTALL)
-        layout_blocks = [block for block in blocks if "verify_nvr_monitor_layout" in block]
+        layout_blocks = [block for block in blocks if "verify_nine_space_nvr_monitor_layout" in block]
         self.assertGreaterEqual(len(layout_blocks), 3)
         for block in layout_blocks:
             with self.subTest(block=block[:60]):
@@ -127,7 +127,7 @@ class DeployLayoutSafetyTests(unittest.TestCase):
                 "try:\n data=json.load(open(sys.argv[-1]))\nexcept Exception: raise SystemExit(1)\n"
                 "expr=' '.join(sys.argv)\n"
                 "ok=isinstance(data,dict)\n"
-                "if 'domain == \\\"nvr_monitor\\\"' in expr: ok &= data.get('domain') == 'nvr_monitor'\n"
+                "if 'domain == \\\"nine_space_nvr_monitor\\\"' in expr: ok &= data.get('domain') == 'nine_space_nvr_monitor'\n"
                 "if '.version == $v' in expr:\n i=sys.argv.index('--arg'); ok &= data.get('version') == sys.argv[i+2]\n"
                 "raise SystemExit(0 if ok else 1)\n"
             )
@@ -136,13 +136,13 @@ class DeployLayoutSafetyTests(unittest.TestCase):
             write_manifest(components / DOMAIN)
             script = (
                 f"source {helper_path}\nCUSTOM_COMPONENTS={components}\n"
-                "verify_nvr_monitor_layout\n"
+                "verify_nine_space_nvr_monitor_layout\n"
             )
             env = {**__import__("os").environ, "PATH": f"{fake_bin}:{__import__('os').environ['PATH']}"}
             self.assertEqual(0, subprocess.run(["bash", "-c", script,], env=env).returncode)
-            write_manifest(components / ".nvr_monitor.stage")
+            write_manifest(components / ".nine_space_nvr_monitor.stage")
             self.assertNotEqual(0, subprocess.run(["bash", "-c", script], env=env).returncode)
-            (components / ".nvr_monitor.stage/manifest.json").write_text("{")
+            (components / ".nine_space_nvr_monitor.stage/manifest.json").write_text("{")
             self.assertNotEqual(0, subprocess.run(["bash", "-c", script], env=env).returncode)
 
     def test_production_helper_transaction_and_log_matrix(self) -> None:
@@ -258,10 +258,10 @@ class DeployLayoutSafetyTests(unittest.TestCase):
         self.assertIn("Supervisor managed repository", DEPLOY)
         self.assertIn("ha apps update --backup '$ADDON_SLUG'", DEPLOY)
         self.assertIn("Settings > Apps > App store", DEPLOY)
-        self.assertIn("不得 fallback 到 HA local add-on source", DEPLOY)
+        self.assertIn("不得 fallback 到 HA local app source", DEPLOY)
         self.assertNotIn("ADDON_REMOTE_DIR", DEPLOY)
-        self.assertNotIn("9space_snapshot_api.tgz", DEPLOY)
-        self.assertNotIn("## Add-on source deployment", DEPLOY)
+        self.assertNotIn("nine_space_snapshot.tgz", DEPLOY)
+        self.assertNotIn("## App source deployment", DEPLOY)
         self.assertNotIn("ha apps rebuild '$ADDON_SLUG'", DEPLOY)
 
     def test_rollbacks_are_scoped_to_the_mutated_component(self) -> None:

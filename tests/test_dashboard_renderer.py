@@ -22,7 +22,7 @@ def sample() -> dict:
 
 
 class DashboardRendererTests(unittest.TestCase):
-    def test_non_fourteen_channels_local_ping_statistics_and_center_contract(self) -> None:
+    def test_non_fourteen_channels_local_ping_statistics_and_hub_contract(self) -> None:
         mapping = sample()
         self.assertEqual([3, 8, 21], [item["channel_id"] for item in mapping["channels"]])
         yaml = lovelace_yaml(mapping)

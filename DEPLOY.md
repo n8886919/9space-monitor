@@ -11,7 +11,7 @@
 - GitHub Actions deployment
 - self-hosted runner
 - 多站點 rollout
-- 把 Snapshot add-on source 上傳到 HA local `/addons`
+- 把 Snapshot app source 上傳到 HA local `/addons`
 - 自動修改 Home Assistant `.storage`
 - 自動 config-entry migration
 
@@ -19,17 +19,17 @@
 
 - `8122` 是獨立舊正式服務，永久禁止操作。
 - 不得對 `8122` 執行 test、restart、rebuild、reload、modify，亦不得把 `8122` 當成 integration URL。
-- 本 repository 的 monorepo add-on 版本為 `0.3.12`，host port 是 `8222`，container port 是 `8000`。
-- NVR RTSP／HTTP ports 固定為 `554`／`80`，不再出現在 add-on options；升級後殘留的舊 keys 由 runtime 忽略。
-- Snapshot add-on 只能由 HA 已設定的 Supervisor managed repository 安裝與更新；不得以 tar／scp 寫入 local `/addons`，也不得把 local source 當更新失敗時的替代路徑。
-- 舊 Center 已由 `nine_space_monitor_hub/` Supervisor add-on 取代；Hub 不使用 SQLite 保存狀態歷史，歷史由中央 HA Recorder 保存。
-- Supervisor add-on identifier／slug 與 internal hostname 不可混用。
-- 唯讀 version gate 只有在 Supervisor 已安裝 add-on 是 `0.3.12` 時才通過；不得因舊版 endpoint 可用就跳過必要的 repository update。
-- 若任務已要求部署，add-on 的 managed update 或 integration 的 scoped upload、restart 與 verify 可依本文件連續完成；操作 `8122`、`.storage`、destructive rollback、schema／auth 或 public exposure 仍須另行明確確認。
+- 本 repository 的 monorepo app 版本為 `0.3.12`，host port 是 `8222`，container port 是 `8000`。
+- NVR RTSP／HTTP ports 固定為 `554`／`80`，不再出現在 app options；升級後殘留的舊 keys 由 runtime 忽略。
+- Snapshot app 只能由 HA 已設定的 Supervisor managed repository 安裝與更新；不得以 tar／scp 寫入 local `/addons`，也不得把 local source 當更新失敗時的替代路徑。
+- 舊 Center 已由 `nine_space_hub/` Supervisor app 取代；Hub 不使用 SQLite 保存狀態歷史，歷史由中央 HA Recorder 保存。
+- Supervisor app identifier／slug 與 internal hostname 不可混用。
+- 唯讀 version gate 只有在 Supervisor 已安裝 app 是 `0.3.12` 時才通過；不得因舊版 endpoint 可用就跳過必要的 repository update。
+- 若任務已要求部署，app 的 managed update 或 integration 的 scoped upload、restart 與 verify 可依本文件連續完成；操作 `8122`、`.storage`、destructive rollback、schema／auth 或 public exposure 仍須另行明確確認。
 - 不得直接編輯 `/config/.storage/core.config_entries` 或其他 `.storage` 檔案。
 - 不得自動建立或接受帶有 `_2` 後綴的 replacement entities。
 - 唯讀操作不備份。只有真正要修改的 component 才在 mutation 前建立 scoped rollback。
-- `.storage`／config-entry backup 只在確定要變更 config entry 前建立；add-on update 使用 Supervisor 的 scoped partial backup，不建立 source copy。
+- `.storage`／config-entry backup 只在確定要變更 config entry 前建立；app update 使用 Supervisor 的 scoped partial backup，不建立 source copy。
 
 ## 變數
 
@@ -41,12 +41,12 @@ export HA_SSH_PORT="22"
 export HA_USER="root"
 export REMOTE="${HA_USER}@${HA_HOST}"
 
-export INTEGRATION_DOMAIN="nvr_monitor"
+export INTEGRATION_DOMAIN="nine_space_nvr_monitor"
 export INTEGRATION_REMOTE_DIR="/config/custom_components/${INTEGRATION_DOMAIN}"
 
 export ADDON_SLUG="<actual-supervisor-addon-slug>"
 export ADDON_TARGET_VERSION="0.3.12"
-export ADDON_HOSTNAME="afa94ae2-9space-snapshot-addon"
+export ADDON_HOSTNAME="afa94ae2-9space-snapshot"
 export ADDON_HOST_PORT="8222"
 export ADDON_CONTAINER_PORT="8000"
 export INTEGRATION_BASE_URL="http://${ADDON_HOSTNAME}:${ADDON_CONTAINER_PORT}"
@@ -55,11 +55,11 @@ export INTEGRATION_BASE_URL="http://${ADDON_HOSTNAME}:${ADDON_CONTAINER_PORT}"
 變數用途必須明確區分：
 
 - `ADDON_SLUG`：只供 `ha apps ...` 指令使用。
-- `ADDON_SLUG`：必須以 Supervisor 實際輸出為準；目前觀察到的 identifier 是 `afa94ae2_9space_snapshot_addon`。
+- `ADDON_SLUG`：必須以 Supervisor 實際輸出為準。本次 source slug 已改為 `9space_snapshot`；目前已部署的舊 app identifier 仍是 `afa94ae2_9space_snapshot_addon`，不得把它當成新 slug。
 - `ADDON_TARGET_VERSION`：必須等於已發布至既有 Supervisor repository 的 `config.yaml` version；不能只存在未 push 的 local checkout。
-- `ADDON_HOSTNAME`：只供 Home Assistant Core 連到 add-on container。
+- `ADDON_HOSTNAME`：只供 Home Assistant Core 連到 app container。
 - `ADDON_HOST_PORT`：只供 host-side smoke test。
-- `ADDON_CONTAINER_PORT`：add-on container 內固定監聽 port，現值 `8000`。
+- `ADDON_CONTAINER_PORT`：app container 內固定監聽 port，現值 `8000`。
 - `INTEGRATION_BASE_URL`：integration 應填入 `http://${ADDON_HOSTNAME}:8000`。
 
 不要把真實 IP、password、SSH private key 或 NVR credentials 寫入本文件、prompt 或 commit。
@@ -70,9 +70,9 @@ export INTEGRATION_BASE_URL="http://${ADDON_HOSTNAME}:${ADDON_CONTAINER_PORT}"
 
 ```bash
 git status --short
-test -f 9space_snapshot_api/config.yaml
-test -f custom_components/nvr_monitor/manifest.json
-python3 -m compileall -q custom_components/nvr_monitor
+test -f nine_space_snapshot/config.yaml
+test -f custom_components/nine_space_nvr_monitor/manifest.json
+python3 -m compileall -q custom_components/nine_space_nvr_monitor
 ```
 
 遠端：
@@ -86,7 +86,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" '
 '
 ```
 
-確認 Supervisor 看到的 add-on slug 與目前版本，避免把 slug 與 hostname 混用：
+確認 Supervisor 看到的 app slug 與目前版本，避免把 slug 與 hostname 混用：
 
 ```bash
 ssh -p "$HA_SSH_PORT" "$REMOTE" \
@@ -98,43 +98,43 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 ## 路徑選擇
 
 - 唯讀 preflight、smoke 與 observation 不建立備份，也不建立 rollback artifact。
-- Add-on 只走 Supervisor managed repository；更新時由 `ha apps update --backup` 建立 scoped partial backup，不複製 source。
+- App 只走 Supervisor managed repository；更新時由 `ha apps update --backup` 建立 scoped partial backup，不複製 source。
 - Integration source deployment 使用同 filesystem transaction 的 `integration_replaced` 作 rollback；完成驗證後清除 transaction。
 - 只有實際要執行 UI Reconfigure 時，才備份一次 `core.config_entries`。
 - `.storage` migration、destructive cleanup、schema／auth 變更不屬 routine deployment；另做精確 plan 與 task-specific backup。
 
-## 9Space Monitor Hub 安裝
+## 9Space Hub 安裝
 
-Hub add-on 由同一 Supervisor managed repository 的 `nine_space_monitor_hub/`
+Hub app 由同一 Supervisor managed repository 的 `nine_space_hub/`
 提供。先 push default branch，再由使用者在 App store 刷新既有 repository 並安裝
-`9space_monitor_hub`；不得用 SSH 複製到 local `/addons`。
+`9space_hub`；不得用 SSH 複製到 local `/addons`。
 
 Hub options 只保留全域 freshness、refresh interval 與 snapshot store 限制。每站
-Snapshot add-on 只需設定一個 `hub_ip`，scheme、port `8765` 與 telemetry path 固定。
+Snapshot app 只需設定一個 `hub_ip`，scheme、port `8765` 與 telemetry path 固定。
 它直接查詢 Tailscale resolver，不依賴 container system DNS；同機 Hub 自動使用
 Supervisor internal hostname。Hub 從實際 Tailscale peer 或 registration 中自動解析且
 驗證的 site address 推導固定 port `8222`，使用者不填站點 IP／URL。
 site/display/channel/concurrency/timeout 沿用既有站點設定。真實 hostname 不提交 Git。安裝後以
 `ha apps info <actual_slug>` 確認實際 slug 與 internal hostname，再把
-`custom_components/nine_space_monitor_hub/` 以 scoped transaction 安裝到中央 HA。
+`custom_components/nine_space_hub/` 以 scoped transaction 安裝到中央 HA。
 
 Component 換入後先執行：
 
 ```bash
-python3 -m compileall -q /config/custom_components/nine_space_monitor_hub
+python3 -m compileall -q /config/custom_components/nine_space_hub
 ha core check
 ```
 
 只有 `ha core check` PASS 才 restart。Component config entry 必須由使用者在 HA UI
-新增並填入 `http://<actual-hub-hostname>:8765`；不得直接編輯 `.storage`。Hub add-on
+新增並填入 `http://<actual-hub-hostname>:8765`；不得直接編輯 `.storage`。Hub app
 保留每鏡頭一張 last-good JPEG；current telemetry／snapshot attempt 只在 RAM，HA
 Recorder 是狀態歷史唯一持有者。
 
 ## 唯讀 preflight／smoke／observation（預設）
 
-Snapshot API smoke test 是 local add-on 與 Hub 的 contract 驗證；`nvr_monitor` 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
+Snapshot API smoke test 是 local app 與 Hub 的 contract 驗證；`nine_space_nvr_monitor` 不建立 Snapshot camera entity，也不呼叫 Snapshot endpoint。
 
-只有 Supervisor 已安裝版本明確為 `0.3.12`，且以下唯讀檢查都正常時，才可跳過 add-on repository update：
+只有 Supervisor 已安裝版本明確為 `0.3.12`，且以下唯讀檢查都正常時，才可跳過 app repository update：
 
 - `ha apps info "$ADDON_SLUG"` 顯示 version `0.3.12`
 - `http://127.0.0.1:${ADDON_HOST_PORT}/healthz`
@@ -150,7 +150,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 "
 ```
 
-任一版本檢查或 smoke test 失敗時，不得以 `8122` 作替代驗證。若任務只要求驗證／observation，回報實際結果後停止；若任務已要求部署且既有 repository、目標 version、slug 與 topology 均已確認，才進入下方 Add-on managed repository deployment。
+任一版本檢查或 smoke test 失敗時，不得以 `8122` 作替代驗證。若任務只要求驗證／observation，回報實際結果後停止；若任務已要求部署且既有 repository、目標 version、slug 與 topology 均已確認，才進入下方 App managed repository deployment。
 
 host-side smoke test 範例：
 
@@ -223,18 +223,18 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 若以上版本 gate 與全部 smoke tests 都正常：
 
-1. 不更新 add-on，也不建立 add-on backup。
+1. 不更新 app，也不建立 app backup。
 2. 若任務只要求 smoke／observation，到此停止。
 3. 只有任務明確包含 integration source deployment 時，才進入 Integration 部署。
 
 若任一項失敗：
 
 1. 保留並回報實際錯誤。
-2. 已要求部署且 repository 與目標明確時走下方 Add-on managed repository deployment；目標或 topology 不明時停止。
+2. 已要求部署且 repository 與目標明確時走下方 App managed repository deployment；目標或 topology 不明時停止。
 
-## Add-on managed repository deployment
+## App managed repository deployment
 
-已安裝版本落後，而任務已要求部署時使用以下步驟。目標版本必須先通過測試、增加 `9space_snapshot_api/config.yaml` version，並已 push 至 HA 現有 Git repository；本流程不負責 commit、push 或變更 HA repository 設定。
+已安裝版本落後，而任務已要求部署時使用以下步驟。目標版本必須先通過測試、增加 `nine_space_snapshot/config.yaml` version，並已 push 至 HA 現有 Git repository；本流程不負責 commit、push 或變更 HA repository 設定。
 
 ### 1. 刷新既有 repository 並確認 update
 
@@ -249,7 +249,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 "
 ```
 
-輸出或 UI 必須明確顯示目標 `ADDON_TARGET_VERSION` 可更新。若 repository 尚未取得目標版本、顯示其他 source，或 CLI／UI 無法確認，停止並回報；不得 fallback 到 HA local add-on source。
+輸出或 UI 必須明確顯示目標 `ADDON_TARGET_VERSION` 可更新。若 repository 尚未取得目標版本、顯示其他 source，或 CLI／UI 無法確認，停止並回報；不得 fallback 到 HA local app source。
 
 ### 2. Supervisor update
 
@@ -265,9 +265,9 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 `ha apps update` 只更新至 repository 最新版，不能指定降版。若命令、build 或啟動失敗，保留 Supervisor 狀態與 partial backup，回報實際錯誤並停止；不要手動寫入 `/addons`、不要改用 local install，也不要自行執行額外 rebuild／restart 掩蓋失敗。
 
-### 3. Add-on smoke test
+### 3. App smoke test
 
-Add-on managed repository update 完成後，只驗證 monorepo add-on host port，不得碰 `8122`：
+App managed repository update 完成後，只驗證 monorepo app host port，不得碰 `8122`：
 
 ```bash
 test "$ADDON_HOST_PORT" = "8222"
@@ -303,19 +303,19 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 ## Integration 部署
 
-只在 add-on 新 API 與 integration client 都已在本機測試後執行。
+只在 app 新 API 與 integration client 都已在本機測試後執行。
 
-本路徑不複製 add-on 或 integration source，也不碰 `.storage`。換入前才在 `/config/9space_deploy` 建立同 filesystem transaction；`integration_replaced` 就是本次唯一 source rollback。
+本路徑不複製 app 或 integration source，也不碰 `.storage`。換入前才在 `/config/9space_deploy` 建立同 filesystem transaction；`integration_replaced` 就是本次唯一 source rollback。
 
 ### Integration layout 不變量（fail-closed）
 
-Home Assistant 會檢查 `/config/custom_components` 的第一層目錄。該層中，`domain: "nvr_monitor"` 的 manifest **精確只能有一份**，而且路徑必須是：
+Home Assistant 會檢查 `/config/custom_components` 的第一層目錄。該層中，`domain: "nine_space_nvr_monitor"` 的 manifest **精確只能有一份**，而且路徑必須是：
 
 ```text
-/config/custom_components/nvr_monitor/manifest.json
+/config/custom_components/nine_space_nvr_monitor/manifest.json
 ```
 
-因此 `/config/custom_components` 下禁止建立任何 integration 暫存、predeploy、failed、rollback 或 old source，特別是 `.nvr_monitor*`、`nvr_monitor.old*`、`nvr_monitor.bak*`。本次 transaction artifact 只能放在 `/config/9space_deploy/nvr-monitor.*`，完成驗證後清除；失敗時保留至 rollback 完成。
+因此 `/config/custom_components` 下禁止建立任何 integration 暫存、predeploy、failed、rollback 或 old source，特別是 `.nine_space_nvr_monitor*`、`nine_space_nvr_monitor.old*`、`nine_space_nvr_monitor.bak*`。本次 transaction artifact 只能放在 `/config/9space_deploy/nine-space-nvr-monitor.*`，完成驗證後清除；失敗時保留至 rollback 完成。
 
 以下 gate 必須在換入前、以及每次 `ha core check`／`ha core restart` 前執行；任何不符都立刻停止，不能以臨時刪除或移動其他目錄繞過。清理不明 legacy sibling 是獨立且可能具破壞性的操作，須確認精確目標後再做。
 
@@ -324,13 +324,13 @@ Home Assistant 會檢查 `/config/custom_components` 的第一層目錄。該層
 ```bash
 # DEPLOY_LAYOUT_HELPER_BEGIN
 require_jq() { command -v jq >/dev/null || { echo 'jq is required' >&2; return 1; }; }
-manifest_ok() { test -f "$1/manifest.json" && test -f "$1/__init__.py" && jq -e --arg v "$2" '.domain == "nvr_monitor" and .version == $v' "$1/manifest.json" >/dev/null; }
-verify_nvr_monitor_layout() {
-  local d m count=0 expected="$CUSTOM_COMPONENTS/nvr_monitor/manifest.json"
+manifest_ok() { test -f "$1/manifest.json" && test -f "$1/__init__.py" && jq -e --arg v "$2" '.domain == "nine_space_nvr_monitor" and .version == $v' "$1/manifest.json" >/dev/null; }
+verify_nine_space_nvr_monitor_layout() {
+  local d m count=0 expected="$CUSTOM_COMPONENTS/nine_space_nvr_monitor/manifest.json"
   require_jq || return; for d in "$CUSTOM_COMPONENTS"/* "$CUSTOM_COMPONENTS"/.[!.]* "$CUSTOM_COMPONENTS"/..?*; do
     test -d "$d" || continue; m="$d/manifest.json"; test -f "$m" || continue
     jq -e 'type == "object" and (.domain | type == "string")' "$m" >/dev/null || return 1
-    if jq -e '.domain == "nvr_monitor"' "$m" >/dev/null; then count=$((count + 1)); test "$m" = "$expected" || return 1; fi
+    if jq -e '.domain == "nine_space_nvr_monitor"' "$m" >/dev/null; then count=$((count + 1)); test "$m" = "$expected" || return 1; fi
   done; test "$count" -eq 1
 }
 same_filesystem() { test "$(stat -c %d "$1")" = "$(stat -c %d "$2")"; }
@@ -342,14 +342,14 @@ begin_transaction() {
 restore_canonical() {
   test -d "$REPLACED" || return 1
   if test -d "$CANONICAL"; then mv "$CANONICAL" "$FAILED" || return 1; fi
-  mv "$REPLACED" "$CANONICAL" && verify_nvr_monitor_layout && ha core check
+  mv "$REPLACED" "$CANONICAL" && verify_nine_space_nvr_monitor_layout && ha core check
 }
 swap_verified_stage() {
-  manifest_ok "$STAGE" "$EXPECTED_VERSION" && verify_nvr_monitor_layout && same_filesystem "$STAGE" "$CUSTOM_COMPONENTS" || return 1
+  manifest_ok "$STAGE" "$EXPECTED_VERSION" && verify_nine_space_nvr_monitor_layout && same_filesystem "$STAGE" "$CUSTOM_COMPONENTS" || return 1
   test -n "${TXN_DIR:-}" && test ! -e "$REPLACED" || return 1
   # Two renames have a short no-canonical window; Core is not reloaded in it.
   mv "$CANONICAL" "$REPLACED" || return 1
-  if ! mv "$STAGE" "$CANONICAL" || ! verify_nvr_monitor_layout || ! ha core check; then restore_canonical; return 1; fi
+  if ! mv "$STAGE" "$CANONICAL" || ! verify_nine_space_nvr_monitor_layout || ! ha core check; then restore_canonical; return 1; fi
 }
 filter_logs_after_marker() {
   local marker="$1" output="$2"
@@ -369,48 +369,48 @@ filter_logs_after_marker() {
 # DEPLOY_LAYOUT_HELPER_END
 ```
 
-若 gate 偵測到 `.nvr_monitor*`、`nvr_monitor.old*` 或 `nvr_monitor.bak*` 等同 domain sibling，routine deployment 必須 fail-closed，不得在部署途中移動或刪除。精確清理這類 artifact 是獨立的 destructive task，須先確認現況與目標。
+若 gate 偵測到 `.nine_space_nvr_monitor*`、`nine_space_nvr_monitor.old*` 或 `nine_space_nvr_monitor.bak*` 等同 domain sibling，routine deployment 必須 fail-closed，不得在部署途中移動或刪除。精確清理這類 artifact 是獨立的 destructive task，須先確認現況與目標。
 
 ### 1. 上傳 integration
 
-Snapshot add-on `0.3.12` 需要 integration `0.2.9` 或更新版本，才能讀取錄影缺口與
+Snapshot app `0.3.12` 需要 integration `0.2.9` 或更新版本，才能讀取錄影缺口與
 RTSP timing diagnostics；`live_checked_at` 仍由 integration-owned 24 小時 RAM ring 使用。Integration `0.2.10`
 在啟動時透過 Recorder 的 read-only executor API 重建最近 24 小時 window；不建立
-第二份磁碟 history，add-on 與 Hub 仍不接收在線率或斷線次數。Integration runtime
-固定使用 Supervisor internal URL `http://afa94ae2-9space-snapshot-addon:8000`，config
-flow／Reconfigure 不再要求或保存使用者輸入的 add-on URL。
+第二份磁碟 history，app 與 Hub 仍不接收在線率或斷線次數。Integration runtime
+固定使用 Supervisor internal URL `http://afa94ae2-9space-snapshot:8000`，config
+flow／Reconfigure 不再要求或保存使用者輸入的 app URL。
 
 ```bash
-tar -C custom_components -czf /tmp/nvr_monitor.tgz nvr_monitor
+tar -C custom_components -czf /tmp/nine_space_nvr_monitor.tgz nine_space_nvr_monitor
 awk '/DEPLOY_LAYOUT_HELPER_BEGIN/{keep=1} keep{print} /DEPLOY_LAYOUT_HELPER_END/{exit}' DEPLOY.md \
-  > /tmp/nvr_monitor_layout_helper.sh
-bash -n /tmp/nvr_monitor_layout_helper.sh
+  > /tmp/nine_space_nvr_monitor_layout_helper.sh
+bash -n /tmp/nine_space_nvr_monitor_layout_helper.sh
 
 scp -P "$HA_SSH_PORT" \
-  /tmp/nvr_monitor.tgz \
-  "$REMOTE:/tmp/nvr_monitor.tgz"
-scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh \
-  "$REMOTE:/tmp/nvr_monitor_layout_helper.sh"
+  /tmp/nine_space_nvr_monitor.tgz \
+  "$REMOTE:/tmp/nine_space_nvr_monitor.tgz"
+scp -P "$HA_SSH_PORT" /tmp/nine_space_nvr_monitor_layout_helper.sh \
+  "$REMOTE:/tmp/nine_space_nvr_monitor_layout_helper.sh"
 
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
 EXPECTED_VERSION="0.2.10"
-CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
+CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nine_space_nvr_monitor"
 mkdir -p /config/9space_deploy
-ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nvr-monitor.XXXXXX)
+ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nine-space-nvr-monitor.XXXXXX)
 # The operator has saved the single helper block verbatim as this local remote file.
-source /tmp/nvr_monitor_layout_helper.sh
+source /tmp/nine_space_nvr_monitor_layout_helper.sh
 PREVIOUS_VERSION=$(jq -r '.version' "$CANONICAL/manifest.json")
 begin_transaction
-cleanup() { rm -f /tmp/nvr_monitor.tgz /tmp/nvr_monitor_layout_helper.sh; }; trap cleanup EXIT
-tar -xzf /tmp/nvr_monitor.tgz --strip-components=1 -C "$STAGE"
+cleanup() { rm -f /tmp/nine_space_nvr_monitor.tgz /tmp/nine_space_nvr_monitor_layout_helper.sh; }; trap cleanup EXIT
+tar -xzf /tmp/nine_space_nvr_monitor.tgz --strip-components=1 -C "$STAGE"
 swap_verified_stage
 ROLLBACK_SOURCE="$REPLACED"
 echo "DEPLOY_ARTIFACT_DIR=$ARTIFACT_DIR"
 echo "ROLLBACK_SOURCE=$ROLLBACK_SOURCE"
 echo "PREVIOUS_VERSION=$PREVIOUS_VERSION"
-RESTART_MARKER=$(date '+%Y-%m-%d %H:%M:%S'); echo "nvr_monitor restart marker: $RESTART_MARKER"
-verify_nvr_monitor_layout; ha core restart || { echo 'restart failed; run the new-transaction rollback below once' >&2; exit 1; }
+RESTART_MARKER=$(date '+%Y-%m-%d %H:%M:%S'); echo "nine_space_nvr_monitor restart marker: $RESTART_MARKER"
+verify_nine_space_nvr_monitor_layout; ha core restart || { echo 'restart failed; run the new-transaction rollback below once' >&2; exit 1; }
 REMOTE_SCRIPT
 ```
 
@@ -435,7 +435,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" '
 
 ### 3. UI Reconfigure 既有 integration
 
-本階段不寫 config-entry migration。優先對既有 `nvr_monitor` entry 使用 Reconfigure，以保留仍由 integration 提供的 `entry_id`、`subentry_id`、entity identity 與 Dashboard 對應；刻意退役的 `camera.*_snapshot` 不在此保留範圍。
+本階段不寫 config-entry migration。優先對既有 `nine_space_nvr_monitor` entry 使用 Reconfigure，以保留仍由 integration 提供的 `entry_id`、`subentry_id`、entity identity 與 Dashboard 對應；刻意退役的 `camera.*_snapshot` 不在此保留範圍。
 
 `core.config_entries` 只在確定要執行 UI Reconfigure 前建立一次；如果既有 config entry 不需變更，跳過本段備份與 UI 步驟。此檔只供緊急比對，不得編輯、不得直接覆寫回 `.storage`。
 
@@ -454,7 +454,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 在 Home Assistant UI：
 
-1. 找到既有 `nvr_monitor` config entry。
+1. 找到既有 `nine_space_nvr_monitor` config entry。
 2. 執行 Reconfigure。
 3. 輸入 `http://${ADDON_HOSTNAME}:8000`。
 4. 完成驗證並儲存。
@@ -487,7 +487,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 1. 停止自動操作。
 2. 回報實際錯誤。
 3. 請使用者決定涉及 config-entry identity 的下一步：
-   A. 修正 internal add-on URL 後重試 Reconfigure。
+   A. 修正 internal app URL 後重試 Reconfigure。
    B. 刪除並重新建立 config entry。
    C. Rollback integration。
 
@@ -498,42 +498,42 @@ Agent 不得自行替使用者選擇會改變 config-entry／entity identity 的
 至少確認：
 
 ```text
-[ ] /healthz 正常（monorepo add-on host port = 8222）
-[ ] 舊 /api/camera/{camera_id} 正常（monorepo add-on host port = 8222）
-[ ] /api/v1/channels 正常（monorepo add-on host port = 8222）
-[ ] integration runtime 使用固定 Supervisor internal URL，UI 無 add-on URL 欄位
+[ ] /healthz 正常（monorepo app host port = 8222）
+[ ] 舊 /api/camera/{camera_id} 正常（monorepo app host port = 8222）
+[ ] /api/v1/channels 正常（monorepo app host port = 8222）
+[ ] integration runtime 使用固定 Supervisor internal URL，UI 無 app URL 欄位
 [ ] Reconfigure 後既有 entry、subentries 與非 Snapshot entity identities 保留
 [ ] 使用者已在 HA UI 移除 orphan `camera.*_snapshot` entities；未修改 `.storage`，未產生 `_2`
-[ ] add-on Snapshot endpoint Content-Type 為 image/jpeg（Hub contract）
+[ ] app Snapshot endpoint Content-Type 為 image/jpeg（Hub contract）
 [ ] integration 不再要求 NVR password
 [ ] NVR channel live-video entities 正常
 [ ] recording entities 正常
 [ ] Ping entities 由 Home Assistant Ping integration 提供
-[ ] Home Assistant log 沒有 nvr_monitor traceback
-[ ] Add-on log 沒有 credentials 或完整 RTSP URL
+[ ] Home Assistant log 沒有 nine_space_nvr_monitor traceback
+[ ] App log 沒有 credentials 或完整 RTSP URL
 ```
 
 查看 log：
 
 ```bash
-awk '/DEPLOY_LAYOUT_HELPER_BEGIN/{keep=1} keep{print} /DEPLOY_LAYOUT_HELPER_END/{exit}' DEPLOY.md > /tmp/nvr_monitor_layout_helper.sh
-bash -n /tmp/nvr_monitor_layout_helper.sh
-scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh "$REMOTE:/tmp/nvr_monitor_layout_helper.sh"
+awk '/DEPLOY_LAYOUT_HELPER_BEGIN/{keep=1} keep{print} /DEPLOY_LAYOUT_HELPER_END/{exit}' DEPLOY.md > /tmp/nine_space_nvr_monitor_layout_helper.sh
+bash -n /tmp/nine_space_nvr_monitor_layout_helper.sh
+scp -P "$HA_SSH_PORT" /tmp/nine_space_nvr_monitor_layout_helper.sh "$REMOTE:/tmp/nine_space_nvr_monitor_layout_helper.sh"
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
   set -euo pipefail
   # Set this to the marker printed immediately before this deployment restart.
   RESTART_MARKER="<YYYY-MM-DD HH:MM:SS>"
-  source /tmp/nvr_monitor_layout_helper.sh
-  log_file=$(mktemp /tmp/nvr-monitor-log.XXXXXX)
-  trap 'rm -f "$log_file" /tmp/nvr_monitor_layout_helper.sh' EXIT
+  source /tmp/nine_space_nvr_monitor_layout_helper.sh
+  log_file=$(mktemp /tmp/nine-space-nvr-monitor-log.XXXXXX)
+  trap 'rm -f "$log_file" /tmp/nine_space_nvr_monitor_layout_helper.sh' EXIT
   filter_logs_after_marker "$RESTART_MARKER" "$log_file"
-  grep -iE "nvr_monitor|traceback|error" "$log_file" || true
+  grep -iE "nine_space_nvr_monitor|traceback|error" "$log_file" || true
 REMOTE_SCRIPT
 ```
 
 只可判讀 marker 之後的 log；不得把 restart 前的歷史 traceback 當成本次部署錯誤。若 Core log 格式不能以此 marker 做時間界線，停止並回報，改由操作者提供可驗證的本次 restart 後 log 範圍。
 
-Add-on log 命令依實際 slug：
+App log 命令依實際 slug：
 
 ```bash
 ssh -p "$HA_SSH_PORT" "$REMOTE" \
@@ -542,14 +542,14 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" \
 
 ### 完成 integration transaction
 
-只有 integration source、Core recovery、restart 後 log 與必要 UI 驗證全部通過，而且確定不需 rollback 後，才清除本次 transaction。Add-on 由 Supervisor managed repository 與其 partial backup 管理，不建立或保留 local source artifact。
+只有 integration source、Core recovery、restart 後 log 與必要 UI 驗證全部通過，而且確定不需 rollback 後，才清除本次 transaction。App 由 Supervisor managed repository 與其 partial backup 管理，不建立或保留 local source artifact。
 
 ```bash
 DEPLOY_ARTIFACT_DIR="<recorded-deploy-artifact-dir>"
 ssh -p "$HA_SSH_PORT" "$REMOTE" "
   set -eu
   case '$DEPLOY_ARTIFACT_DIR' in
-    /config/9space_deploy/nvr-monitor.*) ;;
+    /config/9space_deploy/nine-space-nvr-monitor.*) ;;
     *) echo 'invalid deploy artifact path' >&2; exit 1 ;;
   esac
   test -d '$DEPLOY_ARTIFACT_DIR'
@@ -564,26 +564,26 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 `swap_verified_stage` 或 `ha core check` 失敗時會在同一 transaction 自動恢復。只有換入成功後才發現問題時，才使用先前記錄的 `ROLLBACK_SOURCE` 與 `PREVIOUS_VERSION`：
 
 ```bash
-awk '/DEPLOY_LAYOUT_HELPER_BEGIN/{keep=1} keep{print} /DEPLOY_LAYOUT_HELPER_END/{exit}' DEPLOY.md > /tmp/nvr_monitor_layout_helper.sh
-bash -n /tmp/nvr_monitor_layout_helper.sh
-scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh "$REMOTE:/tmp/nvr_monitor_layout_helper.sh"
+awk '/DEPLOY_LAYOUT_HELPER_BEGIN/{keep=1} keep{print} /DEPLOY_LAYOUT_HELPER_END/{exit}' DEPLOY.md > /tmp/nine_space_nvr_monitor_layout_helper.sh
+bash -n /tmp/nine_space_nvr_monitor_layout_helper.sh
+scp -P "$HA_SSH_PORT" /tmp/nine_space_nvr_monitor_layout_helper.sh "$REMOTE:/tmp/nine_space_nvr_monitor_layout_helper.sh"
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
 ROLLBACK_SOURCE="<recorded-rollback-source>"
 EXPECTED_VERSION="<recorded-previous-version>"
-CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
+CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nine_space_nvr_monitor"
 case "$ROLLBACK_SOURCE" in
-  /config/9space_deploy/nvr-monitor.*/transaction.*/integration_replaced) ;;
+  /config/9space_deploy/nine-space-nvr-monitor.*/transaction.*/integration_replaced) ;;
   *) echo 'invalid rollback source' >&2; exit 1 ;;
 esac
 test -d "$ROLLBACK_SOURCE"
 mkdir -p /config/9space_deploy
-ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nvr-monitor.XXXXXX)
-source /tmp/nvr_monitor_layout_helper.sh
+ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nine-space-nvr-monitor.XXXXXX)
+source /tmp/nine_space_nvr_monitor_layout_helper.sh
 begin_transaction
-cleanup() { rm -f /tmp/nvr_monitor_layout_helper.sh; }; trap cleanup EXIT
+cleanup() { rm -f /tmp/nine_space_nvr_monitor_layout_helper.sh; }; trap cleanup EXIT
 cp -a "$ROLLBACK_SOURCE/." "$STAGE"; swap_verified_stage
-verify_nvr_monitor_layout; ha core restart
+verify_nine_space_nvr_monitor_layout; ha core restart
 echo "ROLLBACK_ARTIFACT_DIR=$ARTIFACT_DIR"
 REMOTE_SCRIPT
 ```
@@ -594,7 +594,7 @@ Rollback 使用相同 helper；還原 integration source 後必須先通過 `ha 
 `.storage`。使用者日後經 UI Reconfigure 儲存時，該舊 key 會自然移除，entity identity
 不變。
 
-### Add-on rollback
+### App rollback
 
 HA CLI 的 `ha apps update` 不能指定降版，因此 routine rollback 不可把舊 source 放回 `/addons`，也不可改用 local install。標準方式是 **forward rollback**：
 
@@ -603,7 +603,7 @@ HA CLI 的 `ha apps update` 不能指定降版，因此 routine rollback 不可�
 3. 在 HA App store 刷新既有 repository，確認新修復版本可用。
 4. 再依本文件執行 `ha apps update --backup` 與 smoke tests。
 
-若要還原 update 建立的 Supervisor partial backup，屬可能回復其他 scoped add-on 狀態的 destructive restore；必須先確認精確 backup 與影響範圍並取得使用者明確批准。不得自行 restore，也不得以 force push、history rewrite 或 local source swap 取代 forward rollback。
+若要還原 update 建立的 Supervisor partial backup，屬可能回復其他 scoped app 狀態的 destructive restore；必須先確認精確 backup 與影響範圍並取得使用者明確批准。不得自行 restore，也不得以 force push、history rewrite 或 local source swap 取代 forward rollback。
 
 ## 部署完成紀錄
 
@@ -613,9 +613,9 @@ HA CLI 的 `ha apps update` 不能指定降版，因此 routine rollback 不可�
 date:
 git commit:
 site alias:
-add-on version:
-add-on repository: existing managed repository confirmed / not confirmed
-add-on update backup: created / not created
+app version:
+app repository: existing managed repository confirmed / not confirmed
+app update backup: created / not created
 integration version:
 integration transaction: removed / retained for rollback / none
 config-entry backup: path / not created

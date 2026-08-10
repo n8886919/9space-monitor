@@ -1,0 +1,141 @@
+{
+  "title": "9Space NVR Monitor",
+  "config": {
+    "abort": {
+      "already_configured": "9Space NVR Monitor is already configured.",
+      "reconfigure_successful": "Configuration updated successfully."
+    },
+    "error": {
+      "invalid_telemetry": "Telemetry settings must use a valid Hub ingest URL and explicit allowlisted mapping.",
+      "already_configured": "This app URL is already configured.",
+      "cannot_connect": "Cannot connect to the local app.",
+      "invalid_response": "The app returned an invalid response.",
+      "unknown": "Unexpected error."
+    },
+    "step": {
+      "user": {
+        "title": "Connect to local app",
+        "description": "9Space NVR Monitor connects automatically to the local 9Space Snapshot app.",
+        "data": {}
+      },
+      "reconfigure": {
+        "title": "Edit 9Space NVR Monitor",
+        "description": "The local app connection is automatic. Telemetry is optional; its mapping is stored only in this Home Assistant config entry and is never sent to Hub.",
+        "data": {
+          "telemetry_site_id": "Telemetry site ID",
+          "telemetry_display_name": "Telemetry display name",
+          "telemetry_center_url": "Hub telemetry ingest URL",
+          "telemetry_mapping": "Telemetry mapping JSON"
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "camera": {
+      "entry_type": "Camera",
+      "initiate_flow": {
+        "user": "Add camera"
+      },
+      "abort": {
+        "reconfigure_successful": "Camera updated successfully."
+      },
+      "error": {
+        "invalid_ip": "Enter a valid IPv4 or IPv6 address.",
+        "duplicate_ip": "This camera IP is already configured.",
+        "duplicate_channel": "This NVR channel is already configured."
+      },
+      "step": {
+        "user": {
+          "title": "Add camera",
+          "description": "Only enabled cameras are probed. Name, model, and group are optional.",
+          "data": {
+            "camera_ip": "Camera IP",
+            "nvr_channel": "NVR channel",
+            "camera_name": "Display name",
+            "model": "Model",
+            "group": "Group",
+            "enabled": "Enable monitoring",
+            "camera_rtsp_port": "Camera RTSP port",
+            "camera_onvif_port": "Camera ONVIF port"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit camera",
+          "data": {
+            "camera_ip": "Camera IP",
+            "nvr_channel": "NVR channel",
+            "camera_name": "Display name",
+            "model": "Model",
+            "group": "Group",
+            "enabled": "Enable monitoring",
+            "camera_rtsp_port": "Camera RTSP port",
+            "camera_onvif_port": "Camera ONVIF port"
+          }
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "camera_rtsp_alive": {
+        "name": "Camera RTSP responding"
+      },
+      "nvr_live_video": {
+        "name": "NVR live video"
+      },
+      "camera_problem": {
+        "name": "Camera problem"
+      },
+      "recording_recent": {
+        "name": "Recording within 24h"
+      },
+      "recording_query_problem": {
+        "name": "Recording query problem"
+      },
+      "onvif_port": {
+        "name": "ONVIF port"
+      },
+      "rtsp_port": {
+        "name": "RTSP port"
+      }
+    },
+    "sensor": {
+      "diagnostic_status": {
+        "name": "Diagnostic status"
+      },
+      "camera_rtsp_response": {
+        "name": "Camera RTSP response"
+      },
+      "nvr_first_packet": {
+        "name": "NVR first RTP packet"
+      },
+      "nvr_probe_duration": {
+        "name": "NVR probe duration"
+      },
+      "daily_online_rate": {
+        "name": "Daily online rate"
+      },
+      "nvr_live_video_disconnect_count_24h": {
+        "name": "NVR live video disconnects 24h"
+      },
+      "recording_count_24h": {
+        "name": "Recording files 24h"
+      },
+      "recording_coverage_24h": {
+        "name": "Recording coverage 24h"
+      },
+      "recording_gap_count_24h": {
+        "name": "Recording gaps 24h"
+      },
+      "recording_gap_total_24h": {
+        "name": "Recording gap total 24h"
+      },
+      "largest_recording_gap_24h": {
+        "name": "Largest recording gap 24h"
+      },
+      "last_recording": {
+        "name": "Last recording"
+      }
+    }
+  }
+}

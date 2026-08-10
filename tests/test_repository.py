@@ -8,7 +8,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOMAIN = "nvr_monitor"
+DOMAIN = "nine_space_nvr_monitor"
 INTEGRATION = ROOT / "custom_components" / DOMAIN
 
 
@@ -34,7 +34,7 @@ class RepositoryTests(unittest.TestCase):
     def test_old_identity_is_absent(self) -> None:
         old_tokens = (
             "nine_space_camera_monitor",
-            "nine_space_nvr_monitor",
+            "nine_space_nvr_monitor_legacy",
             "9Space Camera Monitor",
         )
         source_files = [

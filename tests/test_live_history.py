@@ -11,9 +11,9 @@ import unittest
 
 PATH = (
     Path(__file__).resolve().parents[1]
-    / "custom_components/nvr_monitor/live_history.py"
+    / "custom_components/nine_space_nvr_monitor/live_history.py"
 )
-SPEC = importlib.util.spec_from_file_location("nvr_monitor_live_history_test", PATH)
+SPEC = importlib.util.spec_from_file_location("nine_space_nvr_monitor_live_history_test", PATH)
 assert SPEC and SPEC.loader
 live_history = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = live_history

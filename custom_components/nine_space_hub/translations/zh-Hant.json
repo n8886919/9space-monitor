@@ -1,0 +1,28 @@
+{
+  "title": "9Space 中樞",
+  "config": {
+    "abort": {"already_configured": "此 Hub URL 已設定。"},
+    "error": {
+      "cannot_connect": "無法連線到 9Space 中樞。",
+      "invalid_response": "Hub 回傳的資料不符合契約。",
+      "unknown": "發生未預期的錯誤。"
+    },
+    "step": {"user": {"title": "連接 9Space 中樞", "description": "請輸入已安裝 Hub app 的內部 URL。", "data": {"hub_base_url": "Hub base URL"}}}
+  },
+  "entity": {
+    "binary_sensor": {
+      "live_video": {"name": "即時影像"},
+      "recording_query_ok": {"name": "錄影查詢"},
+      "recording_recent": {"name": "24 小時內有錄影"},
+      "snapshot_success": {"name": "截圖嘗試"}
+    },
+    "sensor": {
+      "recording_files_24h": {"name": "24 小時錄影檔數"},
+      "recording_coverage_24h": {"name": "24 小時錄影覆蓋率"},
+      "snapshot_latency": {"name": "截圖延遲"},
+      "snapshot_age": {"name": "截圖年齡"},
+      "last_recording": {"name": "上次錄影"},
+      "last_snapshot_attempt": {"name": "上次截圖嘗試"}
+    }
+  }
+}

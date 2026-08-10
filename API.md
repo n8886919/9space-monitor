@@ -4,8 +4,8 @@
 
 此 API 是：
 
-- Home Assistant integration 與同站點 add-on 的狀態邊界。
-- M5 add-on／integration 透過 Tailscale push sanitized telemetry 到 Hub 的相容基礎。
+- Home Assistant integration 與同站點 app 的狀態邊界。
+- M5 app／integration 透過 Tailscale push sanitized telemetry 到 Hub 的相容基礎。
 - 目前正在使用的舊 snapshot client 的相容介面。
 
 Hub telemetry ingest API 與 legacy snapshot API、local integration API 分離，且不修改同事現有呼叫方式。
@@ -15,14 +15,14 @@ Hub telemetry ingest API 與 legacy snapshot API、local integration API 分離�
 目前：
 
 - 舊 snapshot endpoint 仍可能透過公網 port forwarding 被既有 client 使用。
-- 新 integration 在同站點呼叫 local add-on。
+- 新 integration 在同站點呼叫 local app。
 - 本階段不加入 API token，以免同時擴大 migration 範圍。
 - API response 必須是 read-only，且不得包含 NVR credentials、完整 RTSP URL 或完整 ffmpeg stderr。
 
 安全債務：
 
 - 公網 port forwarding 不是最終架構。
-- M5 add-on 與 integration 透過 Tailscale push telemetry 到 Hub。
+- M5 app 與 integration 透過 Tailscale push telemetry 到 Hub。
 - 中央 Home Assistant component 只呼叫 Hub。
 - 同事完成切換後，移除 local API 的不必要公網 port forwarding。
 - M5 為受控 Tailscale 內網，不新增 per-site token；Hub 不得暴露至公網。
@@ -62,7 +62,7 @@ Hub telemetry ingest API 與 legacy snapshot API、local integration API 分離�
 
 ### `GET /healthz`
 
-用途：確認 add-on process 與 HTTP event loop 可回應。
+用途：確認 app process 與 HTTP event loop 可回應。
 
 Response：
 
@@ -114,11 +114,11 @@ Response：
 `nvr_probe_duration_ms` 是整次探測耗時。錄影欄位在查詢失敗或尚無成功結果時為
 `null`；首包時間在沒有收到有效 RTP 封包時為 `null`。以上是 additive optional
 欄位，舊 client 可忽略。`daily_online_rate` 與
-`nvr_live_video_disconnect_count_24h` 不由 add-on API 提供；integration 使用
+`nvr_live_video_disconnect_count_24h` 不由 app API 提供；integration 使用
 `live_video` 與 `live_checked_at` 在本機 bounded RAM 計算，並由 Home Assistant
 Recorder 作為唯一持久化歷史。Integration 啟動時唯讀載入 Recorder 中最近
-24 小時的 `nvr_live_video` 狀態變化來重建 RAM window，再接續 add-on 的最新
-probe；不建立第二份磁碟 history。舊 add-on RAM history 不 migration。
+24 小時的 `nvr_live_video` 狀態變化來重建 RAM window，再接續 app 的最新
+probe；不建立第二份磁碟 history。舊 app RAM history 不 migration。
 
 ### `GET /api/v1/channels/{channel_id}`
 
@@ -136,7 +136,7 @@ HTTP status：`404`
 
 ### `GET /api/v1/channels/{channel_id}/snapshot`
 
-用途：供既有 client 取得最新 JPEG；`nvr_monitor` 不呼叫此 endpoint，也不建立 Snapshot camera entity。Hub scheduler 只可經此站點 add-on endpoint 取圖，並寫入自己的最後成功 snapshot store。
+用途：供既有 client 取得最新 JPEG；`nine_space_nvr_monitor` 不呼叫此 endpoint，也不建立 Snapshot camera entity。Hub scheduler 只可經此站點 app endpoint 取圖，並寫入自己的最後成功 snapshot store。
 
 成功：
 
@@ -202,7 +202,7 @@ M5 可在 `/api/v1` 增加不破壞既有 consumer 的 optional 診斷欄位與 
 - `service_busy`
 - `internal_error`
 
-完整內部錯誤可寫 add-on log，但必須去除：
+完整內部錯誤可寫 app log，但必須去除：
 
 - username
 - password
@@ -217,12 +217,12 @@ M5 可在 `/api/v1` 增加不破壞既有 consumer 的 optional 診斷欄位與 
 - 不在 Home Assistant event loop 執行 blocking request。
 - Coordinator 可以一次讀 `/api/v1/channels`，不要每個 entity 各自 request。
 - Integration 不呼叫 Snapshot endpoint，也不建立 Snapshot camera entity。
-- Add-on 無法連線時，NVR 相關 entities 標記 unavailable。
-- 不因 add-on unavailable 阻塞 Home Assistant startup。
+- App 無法連線時，NVR 相關 entities 標記 unavailable。
+- 不因 app unavailable 阻塞 Home Assistant startup。
 - Integration 不 fallback 回直接連接 NVR。
 
-Snapshot 保持由 add-on demand-driven capture 與 cache 提供。M5F 起 `max_concurrency`
-為 site 可設定、runtime bounded 的同時 snapshot 上限，可依網路與 Pi 硬體設定；不得無上限併發。Hub 只經站點 add-on snapshot API 取得圖片，獨立 store 每 site/channel 僅保存最後成功 JPEG，atomic replace、無 history，且 JPEG 不得進 telemetry、log、fixture 或 Git。
+Snapshot 保持由 app demand-driven capture 與 cache 提供。M5F 起 `max_concurrency`
+為 site 可設定、runtime bounded 的同時 snapshot 上限，可依網路與 Pi 硬體設定；不得無上限併發。Hub 只經站點 app snapshot API 取得圖片，獨立 store 每 site/channel 僅保存最後成功 JPEG，atomic replace、無 history，且 JPEG 不得進 telemetry、log、fixture 或 Git。
 
 ## 相容性政策
 
@@ -236,7 +236,7 @@ Snapshot 保持由 add-on demand-driven capture 與 cache 提供。M5F 起 `max_
 Hub 接收既有兩類 sanitized batch，皆不含 JPEG、credentials、Authorization、完整
 RTSP/CGI URL、raw CGI body、snapshot body、Home Assistant entity ID 或 Ping：
 
-1. Add-on NVR telemetry：channel 當下 live/recording 狀態、最新 recording query
+1. App NVR telemetry：channel 當下 live/recording 狀態、最新 recording query
    aggregates、probe/query/snapshot metadata 與 allowlisted diagnostics。
 2. Integration HA telemetry：allowlisted System Monitor、RPi Power、Fast.com 當下狀態。
 
@@ -255,10 +255,10 @@ Producer 規則：
 
 ### `POST /api/v1/telemetry`
 
-沿用既有 producer payload。Snapshot add-on 可附加嚴格驗證的
+沿用既有 producer payload。Snapshot app 可附加嚴格驗證的
 `snapshot_registration`，Hub 先在 RAM 註冊／更新站點，再接受同一批 events；
 integration producer 不得附加此欄位。註冊不寫入磁碟，Hub restart 後由 producer
-下一批重新建立。registration 只包含 channels、concurrency、timeout 與 add-on
+下一批重新建立。registration 只包含 channels、concurrency、timeout 與 app
 自動解析的 Tailscale site address，不接受 URL，也不在 discovery API、logs 或狀態
 輸出該 address。Hub 以未套用 proxy headers 的實際 Tailscale TCP peer，加固定 port
 `8222` 建立 Snapshot API origin。Supervisor NAT 隱藏 peer 時使用已驗證的
@@ -267,7 +267,7 @@ registration address；同機 site 使用 Supervisor internal Snapshot hostname�
 
 ### `GET /api/v1/sites`
 
-供 `nine_space_monitor_hub` component discovery 與 polling。只回已註冊站點、camera
+供 `nine_space_hub` component discovery 與 polling。只回已註冊站點、camera
 mapping、最新 live／recording／snapshot attempt 與 last-good age；不回歷史統計、
 private site URL、credentials、JPEG body 或 telemetry export。
 
@@ -287,7 +287,7 @@ Hub debug UI 每 site 一個分頁；所有 camera 顯示 last-good 圖片與目
 相對 `.../last-good-snapshot` route 顯示最後一張圖；component 使用有 stale gate 的
 `/snapshot` route。兩者均不提供 snapshot history、list 或 export。
 
-Hub scheduler 使用 Snapshot add-on 自動註冊的 channel list；不得假設 channel count 或
+Hub scheduler 使用 Snapshot app 自動註冊的 channel list；不得假設 channel count 或
 命名。concurrency 沿用站點 `max_concurrency`，timeout 由 `health_timeout_ms` 加 bounded
 capture margin 換算，refresh 使用 Hub 全域 `snapshot_refresh_seconds`。例如 13 channels、
 concurrency 4：
@@ -299,7 +299,7 @@ site/channel 一張 last-good JPEG，使用 atomic replace，不保存 history�
 
 ## Future TODO
 
-- [x] 將舊 Center 改為 9Space Monitor Hub Supervisor add-on，移除 SQLite/history/export。
+- [x] 將舊 Center 改為 9Space Hub Supervisor app，移除 SQLite/history/export。
 - [x] 依每站 mapping 產生 dashboard YAML renderer（M5D）。
 - [x] Ping (ICMP) 僅產生 Home Assistant local Lovelace／statistics cards，不進 Hub。
 - [x] Hub 最新 snapshot API、bounded store/scheduler 與 debug UI；未修改 legacy local endpoint。

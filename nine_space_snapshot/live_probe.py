@@ -1,0 +1,533 @@
+"""NVR RTSP live-video probe, ported from
+``custom_components/nine_space_nvr_monitor/api.py`` (``_nvr_channel``).
+
+This intentionally reuses the same DESCRIBE / SETUP / PLAY / RTP-packet
+detection algorithm as the integration used to run itself (per AGENTS.md:
+"不重新設計另一套完全不同的探測方法"). The only real differences are:
+
+- Operates on a plain ``channel_id: int`` instead of a ``CameraConfig``
+  subentry, since the app has no concept of Home Assistant subentries.
+- Returns a small, already-redacted dict (status, error and bounded timing metadata)
+  instead of the integration's larger diagnostic dict, so nothing NVR
+  credential/URL related can leak into the app API response or logs.
+- Runs synchronously (blocking sockets); callers must run it via
+  ``asyncio.to_thread`` so it never blocks the FastAPI event loop.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import re
+import secrets
+import socket
+import time
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+
+CONNECT_TIMEOUT = 1.5
+RTSP_RESPONSE_TIMEOUT = 3.0
+# Covers TCP connect plus every DESCRIBE/SETUP/PLAY send/read, including an
+# authentication retry. RTP observation intentionally retains its separate
+# first-packet deadline and post-first-packet extension below.
+RTSP_OPERATION_TIMEOUT = 8.0
+RTP_FIRST_PACKET_TIMEOUT = 3.0
+RTP_AFTER_FIRST_PACKET_SECONDS = 2.0
+MAX_RTSP_MESSAGE_BYTES = 128 * 1024
+MAX_RTSP_BODY_BYTES = 256 * 1024
+MAX_INTERLEAVED_FRAME_BYTES = 2 * 1024 * 1024
+# RTCP compound packet types (RFC 3550 section 12.1): Sender Report,
+# Receiver Report, Source Description, BYE and APP. These share the same
+# interleaved-frame envelope, minimum length and RTP-version bits as a real
+# RTP video packet, so they must be explicitly excluded by inspecting the
+# second payload byte (which for RTCP is the plain packet-type value, not an
+# RTP marker-bit/payload-type field) -- otherwise a peer sending only RTCP
+# traffic on the video channel could be misreported as live video.
+_RTCP_PACKET_TYPES = frozenset({200, 201, 202, 203, 204})
+
+
+def _set_socket_timeout_for_deadline(
+    sock: socket.socket, deadline: float, limit: float
+) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("rtsp_operation_deadline_exceeded")
+    timeout = min(limit, remaining)
+    sock.settimeout(timeout)
+    return timeout
+
+
+@dataclass(frozen=True)
+class NvrConfig:
+    """Dahua NVR RTSP connection settings (app scope only)."""
+
+    host: str
+    port: int
+    username: str
+    password: str
+
+
+def _read_rtsp_response(
+    sock: socket.socket, buffered: bytes = b"", deadline: float | None = None
+) -> tuple[int | None, dict[str, str], bytes, bytes]:
+    # A single monotonic deadline for the whole header+body read, not just
+    # each individual recv() timeout: a slow peer trickling a few bytes at
+    # a time could otherwise keep resetting the per-recv timeout and stall
+    # this exchange indefinitely.
+    if deadline is None:
+        deadline = time.monotonic() + RTSP_RESPONSE_TIMEOUT
+    data = buffered
+    while b"\r\n\r\n" not in data:
+        _set_socket_timeout_for_deadline(sock, deadline, RTSP_RESPONSE_TIMEOUT)
+        chunk = sock.recv(4096)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("rtsp_operation_deadline_exceeded")
+        if not chunk:
+            raise ConnectionError("rtsp_connection_closed")
+        data += chunk
+        if len(data) > MAX_RTSP_MESSAGE_BYTES:
+            raise ValueError("rtsp_header_too_large")
+
+    raw_header, remainder = data.split(b"\r\n\r\n", 1)
+    lines = raw_header.decode("iso-8859-1", errors="replace").split("\r\n")
+    match = re.match(r"RTSP/\d\.\d\s+(\d{3})", lines[0])
+    status = int(match.group(1)) if match else None
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        if ":" in line:
+            key, value = line.split(":", 1)
+            headers[key.strip().lower()] = value.strip()
+
+    content_length = int(headers.get("content-length", "0") or "0")
+    if content_length < 0 or content_length > MAX_RTSP_BODY_BYTES:
+        raise ValueError("rtsp_body_too_large")
+    while len(remainder) < content_length:
+        _set_socket_timeout_for_deadline(sock, deadline, RTSP_RESPONSE_TIMEOUT)
+        chunk = sock.recv(min(4096, content_length - len(remainder)))
+        if time.monotonic() >= deadline:
+            raise TimeoutError("rtsp_operation_deadline_exceeded")
+        if not chunk:
+            raise ConnectionError("rtsp_body_truncated")
+        remainder += chunk
+    return (
+        status,
+        headers,
+        remainder[:content_length],
+        remainder[content_length:],
+    )
+
+
+def _encode_request(
+    method: str,
+    uri: str,
+    cseq: int,
+    authorization: str = "",
+    extra_headers: dict[str, str] | None = None,
+) -> bytes:
+    headers = {
+        "CSeq": str(cseq),
+        "User-Agent": "9Space-Snapshot-Addon/0.3",
+    }
+    if authorization:
+        headers["Authorization"] = authorization
+    if extra_headers:
+        headers.update(extra_headers)
+    encoded = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+    return f"{method} {uri} RTSP/1.0\r\n{encoded}\r\n".encode()
+
+
+def _send_request(
+    sock: socket.socket,
+    method: str,
+    uri: str,
+    cseq: int,
+    authorization: str = "",
+    extra_headers: dict[str, str] | None = None,
+    buffered: bytes = b"",
+    deadline: float | None = None,
+) -> tuple[int | None, dict[str, str], bytes, bytes]:
+    if deadline is None:
+        deadline = time.monotonic() + RTSP_RESPONSE_TIMEOUT
+    _set_socket_timeout_for_deadline(sock, deadline, RTSP_RESPONSE_TIMEOUT)
+    sock.sendall(_encode_request(method, uri, cseq, authorization, extra_headers))
+    if time.monotonic() >= deadline:
+        raise TimeoutError("rtsp_operation_deadline_exceeded")
+    return _read_rtsp_response(sock, buffered, deadline)
+
+
+def _parse_auth_challenge(header: str) -> tuple[str, dict[str, str]]:
+    scheme, _, remainder = header.partition(" ")
+    values: dict[str, str] = {}
+    for match in re.finditer(
+        r'([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(?:"([^"]*)"|([^,\s]+))',
+        remainder,
+    ):
+        values[match.group(1).lower()] = match.group(2) or match.group(3) or ""
+    return scheme.lower(), values
+
+
+def _md5(text: str) -> str:
+    return hashlib.md5(text.encode()).hexdigest()
+
+
+def _authorization(
+    challenge: str, username: str, password: str, method: str, uri: str
+) -> str:
+    scheme, values = _parse_auth_challenge(challenge)
+    if scheme == "basic":
+        token = base64.b64encode(f"{username}:{password}".encode()).decode()
+        return f"Basic {token}"
+    if scheme != "digest":
+        raise ValueError("unsupported_rtsp_auth")
+
+    realm = values.get("realm", "")
+    nonce = values.get("nonce", "")
+    if not nonce:
+        raise ValueError("missing_rtsp_nonce")
+    algorithm = values.get("algorithm", "MD5").upper()
+    cnonce = secrets.token_hex(8)
+    ha1 = _md5(f"{username}:{realm}:{password}")
+    if algorithm == "MD5-SESS":
+        ha1 = _md5(f"{ha1}:{nonce}:{cnonce}")
+    elif algorithm != "MD5":
+        raise ValueError("unsupported_digest_algorithm")
+    ha2 = _md5(f"{method}:{uri}")
+    qops = [item.strip() for item in values.get("qop", "").split(",")]
+    qop = "auth" if "auth" in qops else ""
+    if qop:
+        nc = "00000001"
+        response = _md5(f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}")
+    else:
+        nc = ""
+        response = _md5(f"{ha1}:{nonce}:{ha2}")
+
+    fields = [
+        f'username="{username}"',
+        f'realm="{realm}"',
+        f'nonce="{nonce}"',
+        f'uri="{uri}"',
+        f'response="{response}"',
+        f"algorithm={algorithm}",
+    ]
+    if values.get("opaque"):
+        fields.append(f'opaque="{values["opaque"]}"')
+    if qop:
+        fields.extend([f"qop={qop}", f"nc={nc}", f'cnonce="{cnonce}"'])
+    return "Digest " + ", ".join(fields)
+
+
+def _send_authenticated(
+    sock: socket.socket,
+    method: str,
+    uri: str,
+    cseq: int,
+    username: str,
+    password: str,
+    challenge: str,
+    extra_headers: dict[str, str] | None = None,
+    buffered: bytes = b"",
+    deadline: float | None = None,
+) -> tuple[int | None, dict[str, str], bytes, bytes, int, str]:
+    if deadline is None:
+        deadline = time.monotonic() + RTSP_RESPONSE_TIMEOUT
+    auth = (
+        _authorization(challenge, username, password, method, uri) if challenge else ""
+    )
+    status, headers, body, extra = _send_request(
+        sock,
+        method,
+        uri,
+        cseq,
+        auth,
+        extra_headers,
+        buffered,
+        deadline=deadline,
+    )
+    cseq += 1
+    if status == 401 and (new_challenge := headers.get("www-authenticate")):
+        challenge = new_challenge
+        auth = _authorization(challenge, username, password, method, uri)
+        status, headers, body, extra = _send_request(
+            sock,
+            method,
+            uri,
+            cseq,
+            auth,
+            extra_headers,
+            extra,
+            deadline=deadline,
+        )
+        cseq += 1
+    return status, headers, body, extra, cseq, challenge
+
+
+def _resolve_control_uri(presentation_uri: str, content_base: str, control: str) -> str:
+    if not control or control == "*":
+        return presentation_uri
+    if control.lower().startswith("rtsp://"):
+        return control
+    if control.startswith("/"):
+        parsed = urlsplit(presentation_uri)
+        return f"{parsed.scheme}://{parsed.netloc}{control}"
+    base = content_base or presentation_uri
+    parsed = urlsplit(base)
+    path = parsed.path if parsed.path.endswith("/") else f"{parsed.path}/"
+    return urlunsplit((parsed.scheme, parsed.netloc, f"{path}{control}", parsed.query, ""))
+
+
+def _video_control_uri(sdp: str, presentation_uri: str, content_base: str) -> str:
+    in_video = False
+    control = ""
+    for raw_line in sdp.splitlines():
+        line = raw_line.strip()
+        if line.startswith("m="):
+            if in_video:
+                break
+            in_video = line.startswith("m=video")
+        elif in_video and line.startswith("a=control:"):
+            control = line.partition(":")[2].strip()
+            break
+    return _resolve_control_uri(presentation_uri, content_base, control)
+
+
+def _observe_rtp(sock: socket.socket, buffered: bytes, video_channel: int) -> dict[str, Any]:
+    started = time.perf_counter()
+    deadline = started + RTP_FIRST_PACKET_TIMEOUT
+    data = bytearray(buffered)
+    packets = 0
+    timestamps: set[int] = set()
+    first_packet_seen = False
+    first_packet_ms: float | None = None
+
+    while time.perf_counter() < deadline:
+        while len(data) < 4 and time.perf_counter() < deadline:
+            sock.settimeout(max(0.05, min(0.5, deadline - time.perf_counter())))
+            try:
+                chunk = sock.recv(8192)
+            except socket.timeout:
+                continue
+            if not chunk:
+                break
+            data.extend(chunk)
+        if len(data) < 4:
+            continue
+        if data[0] != 0x24:
+            marker = data.find(0x24)
+            if marker < 0:
+                data.clear()
+            else:
+                del data[:marker]
+            continue
+
+        channel = data[1]
+        frame_length = int.from_bytes(data[2:4], "big")
+        if frame_length > MAX_INTERLEAVED_FRAME_BYTES:
+            raise ValueError("interleaved_frame_too_large")
+        while len(data) < 4 + frame_length and time.perf_counter() < deadline:
+            sock.settimeout(max(0.05, min(0.5, deadline - time.perf_counter())))
+            try:
+                chunk = sock.recv(min(65536, 4 + frame_length - len(data)))
+            except socket.timeout:
+                continue
+            if not chunk:
+                break
+            data.extend(chunk)
+        if len(data) < 4 + frame_length:
+            continue
+
+        payload = bytes(data[4 : 4 + frame_length])
+        del data[: 4 + frame_length]
+        if channel != video_channel or len(payload) < 12 or payload[0] >> 6 != 2:
+            continue
+        if payload[1] in _RTCP_PACKET_TYPES:
+            # A valid-looking interleaved frame that is actually an RTCP
+            # report, not RTP video -- must not count towards "live" and
+            # must not extend the first-packet deadline below.
+            continue
+        packets += 1
+        timestamps.add(int.from_bytes(payload[4:8], "big"))
+        # As soon as the first valid RTP packet arrives, extend the
+        # deadline (never shorten it) so a second, later packet with a
+        # different timestamp still has time to arrive -- matching the
+        # integration's original behaviour this probe was ported from.
+        if not first_packet_seen:
+            first_packet_seen = True
+            first_at = time.perf_counter()
+            first_packet_ms = round((first_at - started) * 1000, 1)
+            deadline = max(deadline, first_at + RTP_AFTER_FIRST_PACKET_SECONDS)
+        if packets >= 2 and len(timestamps) >= 2:
+            break
+
+    return {
+        "live_video": packets >= 2 and len(timestamps) >= 2,
+        "nvr_first_packet_ms": first_packet_ms,
+    }
+
+
+def _classify_error(exc_or_reason: str) -> str:
+    """Map our own, internally-raised protocol/parser failure reasons
+    (``ValueError``/``RuntimeError`` messages we construct ourselves, e.g.
+    ``"describe_status_401"`` or ``"sdp_has_no_video"``) to the stable
+    API.md error codes.
+
+    This string-based matching is safe here because these messages are
+    entirely our own controlled, fixed vocabulary -- never the OS/locale
+    -dependent text of a real ``OSError`` (that case is handled separately
+    by ``_classify_os_error`` below, dispatched by exception *type* rather
+    than message text, since OS error strings such as "Name or service not
+    known" vary by platform/locale and must not be relied upon).
+
+    Never include usernames, passwords, full RTSP URLs or exception text
+    here; only short, pre-defined codes are allowed in the API response.
+    """
+    reason = exc_or_reason.lower()
+    if "401" in reason or "auth" in reason:
+        return "authentication_failed"
+    if "deadline" in reason or "timeout" in reason:
+        return "rtsp_timeout"
+    if "too_large" in reason:
+        return "internal_error"
+    if "no_video" in reason or "sdp_has_no_video" in reason or "rtp_video_timeout" in reason:
+        return "no_video"
+    return "internal_error"
+
+
+def _classify_os_error(exc: OSError) -> str:
+    """Map a real network-layer ``OSError`` (DNS failure, connection
+    refused, unreachable network, reset, etc.) to ``nvr_unreachable`` based
+    purely on the exception *type*, never on ``str(exc)``. OS error message
+    text (e.g. "Name or service not known" vs "Network is unreachable") is
+    platform- and locale-dependent and must not be relied upon to decide
+    error classification.
+    """
+    return "nvr_unreachable"
+
+
+def probe_channel(channel_id: int, nvr: NvrConfig) -> dict:
+    """Run one DESCRIBE/SETUP/PLAY/RTP probe for ``channel_id``.
+
+    Blocking (uses plain sockets); must be called via ``asyncio.to_thread``.
+    Returns bounded status and timing metadata only -- no credentials, RTSP
+    URL or raw exception text.
+    """
+    probe_started = time.perf_counter()
+    operation_deadline = time.monotonic() + RTSP_OPERATION_TIMEOUT
+    uri = f"rtsp://{nvr.host}:{nvr.port}/cam/realmonitor?channel={channel_id}&subtype=1"
+    sock: socket.socket | None = None
+    session_id = ""
+    challenge = ""
+    cseq = 1
+    live_video = False
+    error_code: str | None = None
+    first_packet_ms: float | None = None
+    try:
+        connect_timeout = min(
+            CONNECT_TIMEOUT,
+            max(0.0, operation_deadline - time.monotonic()),
+        )
+        if connect_timeout <= 0:
+            raise TimeoutError("rtsp_operation_deadline_exceeded")
+        sock = socket.create_connection((nvr.host, nvr.port), timeout=connect_timeout)
+        status, headers, body, buffered, cseq, challenge = _send_authenticated(
+            sock,
+            "DESCRIBE",
+            uri,
+            cseq,
+            nvr.username,
+            nvr.password,
+            challenge,
+            {"Accept": "application/sdp"},
+            deadline=operation_deadline,
+        )
+        if status != 200:
+            raise RuntimeError(f"describe_status_{status}")
+        sdp = body.decode(errors="replace")
+        if "m=video" not in sdp:
+            raise RuntimeError("sdp_has_no_video")
+
+        control_uri = _video_control_uri(sdp, uri, headers.get("content-base", ""))
+        status, headers, _, buffered, cseq, challenge = _send_authenticated(
+            sock,
+            "SETUP",
+            control_uri,
+            cseq,
+            nvr.username,
+            nvr.password,
+            challenge,
+            {"Transport": "RTP/AVP/TCP;unicast;interleaved=0-1"},
+            buffered,
+            deadline=operation_deadline,
+        )
+        if status != 200:
+            raise RuntimeError(f"setup_status_{status}")
+        session_id = headers.get("session", "").split(";", 1)[0].strip()
+        if not session_id:
+            raise RuntimeError("missing_rtsp_session")
+        match = re.search(r"interleaved=(\d+)-(\d+)", headers.get("transport", ""), re.I)
+        video_channel = int(match.group(1)) if match else 0
+
+        status, _, _, buffered, cseq, challenge = _send_authenticated(
+            sock,
+            "PLAY",
+            uri,
+            cseq,
+            nvr.username,
+            nvr.password,
+            challenge,
+            {"Session": session_id, "Range": "npt=0.000-"},
+            buffered,
+            deadline=operation_deadline,
+        )
+        if status != 200:
+            raise RuntimeError(f"play_status_{status}")
+
+        observed = _observe_rtp(sock, buffered, video_channel)
+        live_video = observed["live_video"]
+        first_packet_ms = observed.get("nvr_first_packet_ms")
+        if not live_video:
+            error_code = "no_video"
+    except TimeoutError:
+        # socket.timeout is TimeoutError as of Python 3.10; TimeoutError is
+        # also an OSError subclass, so it must be checked before the
+        # generic OSError branch below.
+        error_code = "rtsp_timeout"
+    except OSError as err:
+        # Covers socket.gaierror (DNS resolution failures such as "Name or
+        # service not known"), ConnectionRefusedError, ConnectionError and
+        # any other OSError (e.g. ENETUNREACH "Network is unreachable").
+        # Classified purely by exception type -- never by OS/locale
+        # -dependent message text.
+        error_code = _classify_os_error(err)
+    except (ValueError, RuntimeError) as err:
+        # Our own protocol/parser failures (non-200 status, missing SDP
+        # video, missing session, etc.) -- never treated as a network
+        # -reachability problem regardless of message text.
+        error_code = _classify_error(str(err) or type(err).__name__)
+    finally:
+        if sock is not None:
+            if session_id:
+                try:
+                    _set_socket_timeout_for_deadline(
+                        sock, operation_deadline, RTSP_RESPONSE_TIMEOUT
+                    )
+                    auth = _authorization(
+                        challenge, nvr.username, nvr.password, "TEARDOWN", uri
+                    )
+                    sock.sendall(
+                        _encode_request(
+                            "TEARDOWN", uri, cseq, auth, {"Session": session_id}
+                        )
+                    )
+                except (OSError, TimeoutError, ValueError):
+                    pass
+            sock.close()
+
+    return {
+        "live_video": live_video,
+        "error_code": error_code,
+        "nvr_first_packet_ms": first_packet_ms,
+        "nvr_probe_duration_ms": round(
+            (time.perf_counter() - probe_started) * 1000, 1
+        ),
+    }

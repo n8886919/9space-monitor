@@ -1,4 +1,4 @@
-"""Fake-session tests for the async local add-on API client."""
+"""Fake-session tests for the async local app API client."""
 
 from __future__ import annotations
 
@@ -38,8 +38,8 @@ except ModuleNotFoundError:
     sys.modules["aiohttp"] = aiohttp
 
 
-PATH = Path(__file__).resolve().parents[1] / "custom_components/nvr_monitor/addon_api.py"
-SPEC = importlib.util.spec_from_file_location("nvr_monitor_addon_api_test", PATH)
+PATH = Path(__file__).resolve().parents[1] / "custom_components/nine_space_nvr_monitor/addon_api.py"
+SPEC = importlib.util.spec_from_file_location("nine_space_nvr_monitor_addon_api_test", PATH)
 assert SPEC and SPEC.loader
 addon_api = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = addon_api

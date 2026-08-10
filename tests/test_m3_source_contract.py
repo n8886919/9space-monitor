@@ -8,7 +8,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INTEGRATION = ROOT / "custom_components/nvr_monitor"
+INTEGRATION = ROOT / "custom_components/nine_space_nvr_monitor"
 
 
 class M3SourceContractTests(unittest.TestCase):
@@ -56,7 +56,7 @@ class M3SourceContractTests(unittest.TestCase):
         config_flow = (INTEGRATION / "config_flow.py").read_text()
         init = (INTEGRATION / "__init__.py").read_text()
         self.assertIn(
-            'ADDON_BASE_URL = "http://afa94ae2-9space-snapshot-addon:8000"',
+            'ADDON_BASE_URL = "http://afa94ae2-9space-snapshot:8000"',
             const,
         )
         self.assertIn("ADDON_SCHEMA = vol.Schema({})", config_flow)
@@ -89,7 +89,7 @@ class M3SourceContractTests(unittest.TestCase):
     def test_debug_and_recording_gap_entities_use_addon_data(self):
         sensor = (INTEGRATION / "sensor.py").read_text()
         addon_api = (INTEGRATION / "addon_api.py").read_text()
-        addon_main = (ROOT / "9space_snapshot_api/main.py").read_text()
+        addon_main = (ROOT / "nine_space_snapshot/main.py").read_text()
         for key in (
             "nvr_first_packet",
             "nvr_probe_duration",
@@ -135,8 +135,8 @@ class M3SourceContractTests(unittest.TestCase):
     def test_live_history_is_owned_only_by_integration(self):
         coordinator = (INTEGRATION / "coordinator.py").read_text()
         history = (INTEGRATION / "live_history.py").read_text()
-        addon_state = (ROOT / "9space_snapshot_api/channel_state.py").read_text()
-        addon_telemetry = (ROOT / "9space_snapshot_api/telemetry.py").read_text()
+        addon_state = (ROOT / "nine_space_snapshot/channel_state.py").read_text()
+        addon_telemetry = (ROOT / "nine_space_snapshot/telemetry.py").read_text()
         self.assertIn("LiveHistoryStore", coordinator)
         self.assertIn("LIVE_WINDOW_MS", history)
         integration = (INTEGRATION / "__init__.py").read_text()

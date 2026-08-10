@@ -19,7 +19,7 @@ jobs:
       - name: Validate
         run: |
           set -euo pipefail
-          python -m compileall -q custom_components/nvr_monitor
+          python -m compileall -q custom_components/nine_space_nvr_monitor
           python -m unittest discover -s tests -v
 
       - name: Build installation archive
@@ -27,15 +27,15 @@ jobs:
           set -euo pipefail
           mkdir -p dist/custom_components
           cp -R \
-            custom_components/nvr_monitor \
+            custom_components/nine_space_nvr_monitor \
             dist/custom_components/
           (
             cd dist
-            zip -qr ../nvr_monitor.zip custom_components \
+            zip -qr ../nine_space_nvr_monitor.zip custom_components \
               -x "*/__pycache__/*" "*.pyc"
           )
-          sha256sum nvr_monitor.zip \
-            > nvr_monitor.zip.sha256
+          sha256sum nine_space_nvr_monitor.zip \
+            > nine_space_nvr_monitor.zip.sha256
 
       - name: Create GitHub Release
         env:
@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "$GITHUB_REF_NAME" \
-            nvr_monitor.zip \
-            nvr_monitor.zip.sha256 \
+            nine_space_nvr_monitor.zip \
+            nine_space_nvr_monitor.zip.sha256 \
             --generate-notes \
             --title "$GITHUB_REF_NAME"
