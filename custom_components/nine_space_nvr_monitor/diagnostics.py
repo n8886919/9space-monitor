@@ -11,8 +11,6 @@ from . import NvrMonitorConfigEntry
 
 TO_REDACT = {
     "addon_base_url",
-    "telemetry_center_url",
-    "telemetry_mapping",
     "camera_ip",
     "ip",
     "nvr_host",

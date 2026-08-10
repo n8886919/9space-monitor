@@ -374,11 +374,13 @@ filter_logs_after_marker() {
 ### 1. 上傳 integration
 
 Snapshot app `0.3.13` 需要 integration `0.2.9` 或更新版本，才能讀取錄影缺口與
-RTSP timing diagnostics；`live_checked_at` 仍由 integration-owned 24 小時 RAM ring 使用。Integration `0.2.10`
+RTSP timing diagnostics；`live_checked_at` 仍由 integration-owned 24 小時 RAM ring 使用。Integration `0.2.11`
 在啟動時透過 Recorder 的 read-only executor API 重建最近 24 小時 window；不建立
 第二份磁碟 history，app 與 Hub 仍不接收在線率或斷線次數。Integration runtime
 固定使用 Supervisor internal URL `http://afa94ae2-9space-snapshot:8000`，config
-flow／Reconfigure 不再要求或保存使用者輸入的 app URL。
+flow／Reconfigure 不再要求或保存使用者輸入的 app URL。Integration 只允許一個
+config entry；新增相機只要求 IP 與 NVR channel，標題固定為兩位數 channel，其他
+舊欄位不再顯示於 UI。
 
 ```bash
 tar -C custom_components -czf /tmp/nine_space_nvr_monitor.tgz nine_space_nvr_monitor
@@ -394,7 +396,7 @@ scp -P "$HA_SSH_PORT" /tmp/nine_space_nvr_monitor_layout_helper.sh \
 
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
-EXPECTED_VERSION="0.2.10"
+EXPECTED_VERSION="0.2.11"
 CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nine_space_nvr_monitor"
 mkdir -p /config/9space_deploy
 ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nine-space-nvr-monitor.XXXXXX)
@@ -456,7 +458,7 @@ ssh -p "$HA_SSH_PORT" "$REMOTE" "
 
 1. 找到既有 `nine_space_nvr_monitor` config entry。
 2. 執行 Reconfigure。
-3. 輸入 `http://${ADDON_HOSTNAME}:8000`。
+3. 空白表單直接送出，由 integration 驗證固定的本機 app URL。
 4. 完成驗證並儲存。
 5. 確認既有 entry、subentries 與仍由 integration 提供的 entity identities 都保留。
 6. 部署後由使用者在 HA UI 移除不再由 integration 提供的 orphan `camera.*_snapshot` entities；不得編輯 `.storage`，也不得建立或接受 `_2` replacement entities。

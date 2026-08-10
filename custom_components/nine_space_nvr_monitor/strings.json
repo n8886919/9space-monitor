@@ -6,27 +6,21 @@
       "reconfigure_successful": "Configuration updated successfully."
     },
     "error": {
-      "invalid_telemetry": "Telemetry settings must use a valid Hub ingest URL and explicit allowlisted mapping.",
       "already_configured": "This app URL is already configured.",
       "cannot_connect": "Cannot connect to the local app.",
       "invalid_response": "The app returned an invalid response.",
       "unknown": "Unexpected error."
     },
     "step": {
-      "user": {
-        "title": "Connect to local app",
-        "description": "9Space NVR Monitor connects automatically to the local 9Space Snapshot app.",
-        "data": {}
+        "user": {
+          "title": "Connect to local app",
+          "description": "The automatic connection failed. Make sure the local 9Space Snapshot app is running, then submit to retry.",
+          "data": {}
       },
       "reconfigure": {
         "title": "Edit 9Space NVR Monitor",
-        "description": "The local app connection is automatic. Telemetry is optional; its mapping is stored only in this Home Assistant config entry and is never sent to Hub.",
-        "data": {
-          "telemetry_site_id": "Telemetry site ID",
-          "telemetry_display_name": "Telemetry display name",
-          "telemetry_center_url": "Hub telemetry ingest URL",
-          "telemetry_mapping": "Telemetry mapping JSON"
-        }
+        "description": "The local app connection is automatic.",
+        "data": {}
       }
     }
   },
@@ -47,29 +41,17 @@
       "step": {
         "user": {
           "title": "Add camera",
-          "description": "Only enabled cameras are probed. Name, model, and group are optional.",
+          "description": "Select the camera IP and its NVR channel.",
           "data": {
             "camera_ip": "Camera IP",
-            "nvr_channel": "NVR channel",
-            "camera_name": "Display name",
-            "model": "Model",
-            "group": "Group",
-            "enabled": "Enable monitoring",
-            "camera_rtsp_port": "Camera RTSP port",
-            "camera_onvif_port": "Camera ONVIF port"
+            "nvr_channel": "NVR channel"
           }
         },
         "reconfigure": {
           "title": "Edit camera",
           "data": {
             "camera_ip": "Camera IP",
-            "nvr_channel": "NVR channel",
-            "camera_name": "Display name",
-            "model": "Model",
-            "group": "Group",
-            "enabled": "Enable monitoring",
-            "camera_rtsp_port": "Camera RTSP port",
-            "camera_onvif_port": "Camera ONVIF port"
+            "nvr_channel": "NVR channel"
           }
         }
       }

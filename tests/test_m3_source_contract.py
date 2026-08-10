@@ -34,9 +34,9 @@ class M3SourceContractTests(unittest.TestCase):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
         self.assertNotIn("icmplib", " ".join(manifest.get("requirements", [])))
 
-    def test_manifest_version_is_0_2_10(self):
+    def test_manifest_version_is_0_2_11(self):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
-        self.assertEqual("0.2.10", manifest.get("version"))
+        self.assertEqual("0.2.11", manifest.get("version"))
         self.assertIn("recorder", manifest.get("after_dependencies", []))
 
     def test_all_entities_are_enabled_by_default_and_old_defaults_migrate(self):
@@ -62,6 +62,40 @@ class M3SourceContractTests(unittest.TestCase):
         self.assertIn("ADDON_SCHEMA = vol.Schema({})", config_flow)
         self.assertNotIn("CONF_ADDON_BASE_URL", config_flow)
         self.assertIn("AddonApiClient(ADDON_BASE_URL", init)
+
+    def test_local_addon_entry_and_camera_form_are_minimal(self):
+        manifest = json.loads((INTEGRATION / "manifest.json").read_text())
+        config_flow = (INTEGRATION / "config_flow.py").read_text()
+        strings = json.loads((INTEGRATION / "strings.json").read_text())
+
+        self.assertTrue(manifest.get("single_config_entry"))
+        schema = config_flow.split("CAMERA_SCHEMA =", 1)[1].split(
+            "class NvrMonitorConfigFlow", 1
+        )[0]
+        self.assertIn("CONF_CAMERA_IP", schema)
+        self.assertIn("CONF_NVR_CHANNEL", schema)
+        for removed in (
+            "CONF_CAMERA_NAME",
+            "CONF_MODEL",
+            "CONF_GROUP",
+            "CONF_ENABLED",
+            "CONF_CAMERA_RTSP_PORT",
+            "CONF_CAMERA_ONVIF_PORT",
+        ):
+            with self.subTest(removed=removed):
+                self.assertNotIn(removed, schema)
+
+        add_camera_data = strings["config_subentries"]["camera"]["step"][
+            "user"
+        ]["data"]
+        self.assertEqual({"camera_ip", "nvr_channel"}, set(add_camera_data))
+        initial_flow = config_flow.split("async def async_step_user(", 1)[1].split(
+            "async def async_step_reconfigure(", 1
+        )[0]
+        self.assertIn("await self._async_validate_addon()", initial_flow)
+        self.assertNotIn("if user_input is not None", initial_flow)
+        self.assertIn('title=f"{channel:02d}"', config_flow)
+        self.assertNotIn('title=f"CH{channel:02d}"', config_flow)
 
     def test_snapshot_camera_platform_and_client_are_removed(self):
         const = (INTEGRATION / "const.py").read_text()
@@ -148,11 +182,10 @@ class M3SourceContractTests(unittest.TestCase):
         self.assertNotIn("_live_samples", addon_telemetry)
         self.assertNotIn("disconnect_count_24h", addon_telemetry)
 
-    def test_telemetry_scheduler_stops_only_after_successful_platform_unload(self):
+    def test_nvr_integration_has_no_hub_telemetry_runtime(self):
         init = (INTEGRATION / "__init__.py").read_text()
-        self.assertIn("telemetry_unsubscribe", init)
-        self.assertIn("platforms_unloaded=unloaded", init)
-        self.assertNotIn("entry.async_on_unload(\n            async_track_time_interval", init)
+        self.assertNotIn("telemetry", init.lower())
+        self.assertFalse((INTEGRATION / "ha_telemetry.py").exists())
 
 
 if __name__ == "__main__":

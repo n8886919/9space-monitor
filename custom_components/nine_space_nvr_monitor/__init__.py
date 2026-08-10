@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from collections.abc import Callable
 from typing import TypeAlias
 
 from homeassistant.config_entries import ConfigEntry
@@ -13,21 +11,14 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
-from homeassistant.helpers.event import async_track_time_interval
 
 from .addon_api import AddonApiClient
 from .api import CameraProbeClient
-from .const import ADDON_BASE_URL, DOMAIN, HA_TELEMETRY_INTERVAL, PLATFORMS
+from .const import ADDON_BASE_URL, DOMAIN, PLATFORMS
 from .coordinator import AddonCoordinator, CameraServiceCoordinator
 from .live_history import LiveHistoryStore
 from .models import cameras_from_entry
 from .recorder_history import async_restore_live_history
-from .ha_telemetry import (
-    AiohttpCenterClient,
-    HATelemetryProducer,
-    async_finalize_unload,
-    build_producer,
-)
 
 
 @dataclass(slots=True)
@@ -36,8 +27,6 @@ class NvrMonitorRuntimeData:
 
     addon: AddonCoordinator
     service: CameraServiceCoordinator
-    telemetry: HATelemetryProducer | None
-    telemetry_unsubscribe: Callable[[], None] | None
 
 
 NvrMonitorConfigEntry: TypeAlias = ConfigEntry[NvrMonitorRuntimeData]
@@ -70,13 +59,9 @@ async def async_setup_entry(
     await async_restore_live_history(hass, entry, cameras, live_history)
     addon = AddonCoordinator(hass, entry, addon_client, cameras, live_history)
     service = CameraServiceCoordinator(hass, entry, CameraProbeClient(), cameras)
-    telemetry = build_producer(entry.data, AiohttpCenterClient(async_get_clientsession(hass)))
-    telemetry_unsubscribe = None
     entry.runtime_data = NvrMonitorRuntimeData(
         addon=addon,
         service=service,
-        telemetry=telemetry,
-        telemetry_unsubscribe=telemetry_unsubscribe,
     )
 
     device_registry = dr.async_get(hass)
@@ -92,18 +77,6 @@ async def async_setup_entry(
     entry.async_create_background_task(
         hass, addon.async_refresh(), "Initial app channel refresh"
     )
-    if telemetry is not None:
-        telemetry.start()
-
-        def _sample_telemetry(_: datetime) -> None:
-            telemetry.sample(
-                hass.states.get,
-                now_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
-            )
-
-        entry.runtime_data.telemetry_unsubscribe = async_track_time_interval(
-            hass, _sample_telemetry, HA_TELEMETRY_INTERVAL
-        )
     entry.async_create_background_task(
         hass, service.async_refresh(), "Initial camera service probe"
     )
@@ -123,13 +96,6 @@ async def async_unload_entry(
 ) -> bool:
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    await async_finalize_unload(
-        entry.runtime_data.telemetry,
-        entry.runtime_data.telemetry_unsubscribe,
-        platforms_unloaded=unloaded,
-    )
-    if unloaded:
-        entry.runtime_data.telemetry_unsubscribe = None
     return unloaded
 
 

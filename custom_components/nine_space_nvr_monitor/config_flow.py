@@ -34,61 +34,14 @@ from .addon_api import (
 from .const import (
     ADDON_BASE_URL,
     CONF_CAMERA_IP,
-    CONF_CAMERA_NAME,
-    CONF_CAMERA_ONVIF_PORT,
-    CONF_CAMERA_RTSP_PORT,
-    CONF_ENABLED,
-    CONF_GROUP,
-    CONF_MODEL,
     CONF_NVR_CHANNEL,
-    CONF_TELEMETRY_CENTER_URL,
-    CONF_TELEMETRY_DISPLAY_NAME,
-    CONF_TELEMETRY_MAPPING,
-    CONF_TELEMETRY_SITE_ID,
-    DEFAULT_CAMERA_ONVIF_PORT,
-    DEFAULT_CAMERA_RTSP_PORT,
     DOMAIN,
     SUBENTRY_TYPE_CAMERA,
 )
-from .ha_telemetry import parse_mapping_json, safe_center_url, safe_site_metadata
 
 _LOGGER = logging.getLogger(__name__)
 
-
-def _port_selector(default: int) -> NumberSelector:
-    return NumberSelector(
-        NumberSelectorConfig(
-            min=1,
-            max=65535,
-            step=1,
-            mode=NumberSelectorMode.BOX,
-        )
-    )
-
-
 ADDON_SCHEMA = vol.Schema({})
-
-TELEMETRY_SCHEMA = {
-    vol.Optional(CONF_TELEMETRY_SITE_ID): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
-    vol.Optional(CONF_TELEMETRY_DISPLAY_NAME): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
-    vol.Optional(CONF_TELEMETRY_CENTER_URL): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
-    vol.Optional(CONF_TELEMETRY_MAPPING): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT, multiline=True)),
-}
-
-
-def _telemetry_errors(data: dict[str, Any]) -> dict[str, str]:
-    keys = (CONF_TELEMETRY_SITE_ID, CONF_TELEMETRY_DISPLAY_NAME, CONF_TELEMETRY_CENTER_URL, CONF_TELEMETRY_MAPPING)
-    supplied = [data.get(key) for key in keys]
-    if not any(value not in (None, "") for value in supplied):
-        return {}
-    metadata = safe_site_metadata(data.get(CONF_TELEMETRY_SITE_ID), data.get(CONF_TELEMETRY_DISPLAY_NAME))
-    if metadata is None:
-        return {"base": "invalid_telemetry"}
-    if safe_center_url(data.get(CONF_TELEMETRY_CENTER_URL)) is None:
-        return {"base": "invalid_telemetry"}
-    if parse_mapping_json(data.get(CONF_TELEMETRY_MAPPING)) is None:
-        return {"base": "invalid_telemetry"}
-    return {}
 
 CAMERA_SCHEMA = vol.Schema(
     {
@@ -100,16 +53,6 @@ CAMERA_SCHEMA = vol.Schema(
                 min=1, max=64, step=1, mode=NumberSelectorMode.BOX
             )
         ),
-        vol.Optional(CONF_CAMERA_NAME): str,
-        vol.Optional(CONF_MODEL): str,
-        vol.Optional(CONF_GROUP): str,
-        vol.Required(CONF_ENABLED, default=True): bool,
-        vol.Required(
-            CONF_CAMERA_RTSP_PORT, default=DEFAULT_CAMERA_RTSP_PORT
-        ): _port_selector(DEFAULT_CAMERA_RTSP_PORT),
-        vol.Required(
-            CONF_CAMERA_ONVIF_PORT, default=DEFAULT_CAMERA_ONVIF_PORT
-        ): _port_selector(DEFAULT_CAMERA_ONVIF_PORT),
     }
 )
 
@@ -138,23 +81,22 @@ class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Configure the local app API."""
         errors: dict[str, str] = {}
-        if user_input is not None:
-            if self._async_current_entries():
-                return self.async_abort(reason="already_configured")
-            try:
-                await self._async_validate_addon()
-            except AddonCannotConnect:
-                errors["base"] = "cannot_connect"
-            except AddonInvalidResponse:
-                errors["base"] = "invalid_response"
-            except Exception:
-                _LOGGER.error("Unexpected app validation error")
-                errors["base"] = "unknown"
-            else:
-                return self.async_create_entry(
-                    title="9Space NVR Monitor",
-                    data={},
-                )
+        if self._async_current_entries():
+            return self.async_abort(reason="already_configured")
+        try:
+            await self._async_validate_addon()
+        except AddonCannotConnect:
+            errors["base"] = "cannot_connect"
+        except AddonInvalidResponse:
+            errors["base"] = "invalid_response"
+        except Exception:
+            _LOGGER.error("Unexpected app validation error")
+            errors["base"] = "unknown"
+        else:
+            return self.async_create_entry(
+                title="9Space NVR Monitor",
+                data={},
+            )
 
         return self.async_show_form(
             step_id="user",
@@ -171,15 +113,6 @@ class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
         if user_input is not None:
-            errors = _telemetry_errors(user_input)
-            if errors:
-                return self.async_show_form(
-                    step_id="reconfigure",
-                    data_schema=self.add_suggested_values_to_schema(
-                        vol.Schema({**ADDON_SCHEMA.schema, **TELEMETRY_SCHEMA}), user_input
-                    ),
-                    errors=errors,
-                )
             try:
                 await self._async_validate_addon()
             except AddonCannotConnect:
@@ -190,21 +123,16 @@ class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.error("Unexpected app validation error")
                 errors["base"] = "unknown"
             else:
-                data = {}
-                for key in TELEMETRY_SCHEMA:
-                    field = key.schema
-                    if user_input.get(field):
-                        data[field] = user_input[field]
                 return self.async_update_reload_and_abort(
                     entry,
                     title="9Space NVR Monitor",
-                    data=data,
+                    data={},
                 )
 
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema({**ADDON_SCHEMA.schema, **TELEMETRY_SCHEMA}), user_input or dict(entry.data)
+                ADDON_SCHEMA, user_input
             ),
             errors=errors,
         )
@@ -246,12 +174,8 @@ class CameraSubentryFlowHandler(ConfigSubentryFlow):
             errors = self._validate(user_input)
             if not errors:
                 channel = int(user_input[CONF_NVR_CHANNEL])
-                title = (
-                    str(user_input.get(CONF_CAMERA_NAME, "")).strip()
-                    or f"CH{channel:02d}"
-                )
                 return self.async_create_entry(
-                    title=title,
+                    title=f"{channel:02d}",
                     data=user_input,
                     unique_id=f"channel_{channel}",
                 )
@@ -277,14 +201,10 @@ class CameraSubentryFlowHandler(ConfigSubentryFlow):
             )
             if not errors:
                 channel = int(user_input[CONF_NVR_CHANNEL])
-                title = (
-                    str(user_input.get(CONF_CAMERA_NAME, "")).strip()
-                    or f"CH{channel:02d}"
-                )
                 return self.async_update_and_abort(
                     entry,
                     subentry,
-                    title=title,
+                    title=f"{channel:02d}",
                     unique_id=f"channel_{channel}",
                     data=user_input,
                 )

@@ -6,27 +6,21 @@
       "reconfigure_successful": "設定已更新。"
     },
     "error": {
-      "invalid_telemetry": "Telemetry 設定必須使用有效的 Hub ingest URL 與明確白名單 mapping。",
       "already_configured": "此 app URL 已設定。",
       "cannot_connect": "無法連線到本機 app。",
       "invalid_response": "App 回傳的資料不符合契約。",
       "unknown": "發生未預期的錯誤。"
     },
     "step": {
-      "user": {
-        "title": "連接本機 app",
-        "description": "9Space NVR 監控會自動連接本機 9Space Snapshot app。",
-        "data": {}
+        "user": {
+          "title": "連接本機 app",
+          "description": "自動連線失敗。請確認本機 9Space Snapshot app 已啟動，再按傳送重試。",
+          "data": {}
       },
       "reconfigure": {
         "title": "修改 9Space NVR 監控",
-        "description": "本機 app 連線會自動完成。Telemetry 為選填；mapping 僅保存在此 Home Assistant config entry，絕不傳送到 Hub。",
-        "data": {
-          "telemetry_site_id": "Telemetry site ID",
-          "telemetry_display_name": "Telemetry 顯示名稱",
-          "telemetry_center_url": "Hub telemetry ingest URL",
-          "telemetry_mapping": "Telemetry mapping JSON"
-        }
+        "description": "本機 app 連線會自動完成。",
+        "data": {}
       }
     }
   },
@@ -47,29 +41,17 @@
       "step": {
         "user": {
           "title": "新增攝影機",
-          "description": "系統只探測已啟用的攝影機；名稱、型號與群組可不填。",
+          "description": "選擇攝影機 IP 與對應的 NVR 頻道。",
           "data": {
             "camera_ip": "攝影機 IP",
-            "nvr_channel": "NVR 頻道",
-            "camera_name": "顯示名稱",
-            "model": "型號",
-            "group": "群組",
-            "enabled": "啟用監控",
-            "camera_rtsp_port": "攝影機 RTSP 連接埠",
-            "camera_onvif_port": "攝影機 ONVIF 連接埠"
+            "nvr_channel": "NVR 頻道"
           }
         },
         "reconfigure": {
           "title": "修改攝影機",
           "data": {
             "camera_ip": "攝影機 IP",
-            "nvr_channel": "NVR 頻道",
-            "camera_name": "顯示名稱",
-            "model": "型號",
-            "group": "群組",
-            "enabled": "啟用監控",
-            "camera_rtsp_port": "攝影機 RTSP 連接埠",
-            "camera_onvif_port": "攝影機 ONVIF 連接埠"
+            "nvr_channel": "NVR 頻道"
           }
         }
       }
