@@ -10,6 +10,7 @@ from typing import TypeAlias
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_track_time_interval
@@ -40,6 +41,23 @@ class NvrMonitorRuntimeData:
 
 
 NvrMonitorConfigEntry: TypeAlias = ConfigEntry[NvrMonitorRuntimeData]
+
+
+async def async_migrate_entry(
+    hass: HomeAssistant, entry: NvrMonitorConfigEntry
+) -> bool:
+    """Enable entities disabled by older integration defaults once."""
+    if entry.version < 2:
+        entity_registry = er.async_get(hass)
+        for registry_entry in er.async_entries_for_config_entry(
+            entity_registry, entry.entry_id
+        ):
+            if registry_entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION:
+                entity_registry.async_update_entity(
+                    registry_entry.entity_id, disabled_by=None
+                )
+        hass.config_entries.async_update_entry(entry, version=2)
+    return True
 
 
 async def async_setup_entry(

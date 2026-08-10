@@ -51,7 +51,6 @@ SERVICE_SENSORS = (
         source="service",
         native_unit_of_measurement="ms",
         entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
         value_fn=lambda data: data.get("camera_rtsp_ms"),
     ),
 )
@@ -63,7 +62,6 @@ ADDON_SENSORS = (
         source="addon",
         native_unit_of_measurement="ms",
         entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
         value_fn=lambda data: data.get("nvr_first_packet_ms"),
     ),
     CameraSensorDescription(
@@ -72,7 +70,6 @@ ADDON_SENSORS = (
         source="addon",
         native_unit_of_measurement="ms",
         entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
         value_fn=lambda data: data.get("nvr_probe_duration_ms"),
     ),
     CameraSensorDescription(

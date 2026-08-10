@@ -117,7 +117,7 @@ CAMERA_SCHEMA = vol.Schema(
 class NvrMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the integration config flow."""
 
-    VERSION = 1
+    VERSION = 2
 
     async def _async_validate_addon(self) -> None:
         """Validate process health and the channel response contract."""

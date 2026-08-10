@@ -34,10 +34,22 @@ class M3SourceContractTests(unittest.TestCase):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
         self.assertNotIn("icmplib", " ".join(manifest.get("requirements", [])))
 
-    def test_manifest_version_is_0_2_9(self):
+    def test_manifest_version_is_0_2_10(self):
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
-        self.assertEqual("0.2.9", manifest.get("version"))
+        self.assertEqual("0.2.10", manifest.get("version"))
         self.assertIn("recorder", manifest.get("after_dependencies", []))
+
+    def test_all_entities_are_enabled_by_default_and_old_defaults_migrate(self):
+        sensor = (INTEGRATION / "sensor.py").read_text()
+        binary_sensor = (INTEGRATION / "binary_sensor.py").read_text()
+        config_flow = (INTEGRATION / "config_flow.py").read_text()
+        init = (INTEGRATION / "__init__.py").read_text()
+        self.assertNotIn("entity_registry_enabled_default=False", sensor)
+        self.assertNotIn("entity_registry_enabled_default=False", binary_sensor)
+        self.assertIn("VERSION = 2", config_flow)
+        self.assertIn("async_migrate_entry", init)
+        self.assertIn("RegistryEntryDisabler.INTEGRATION", init)
+        self.assertIn("disabled_by=None", init)
 
     def test_local_addon_url_is_fixed_and_not_user_configured(self):
         const = (INTEGRATION / "const.py").read_text()

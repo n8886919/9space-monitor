@@ -374,7 +374,7 @@ filter_logs_after_marker() {
 ### 1. 上傳 integration
 
 Snapshot add-on `0.3.12` 需要 integration `0.2.9` 或更新版本，才能讀取錄影缺口與
-RTSP timing diagnostics；`live_checked_at` 仍由 integration-owned 24 小時 RAM ring 使用。Integration `0.2.9`
+RTSP timing diagnostics；`live_checked_at` 仍由 integration-owned 24 小時 RAM ring 使用。Integration `0.2.10`
 在啟動時透過 Recorder 的 read-only executor API 重建最近 24 小時 window；不建立
 第二份磁碟 history，add-on 與 Hub 仍不接收在線率或斷線次數。Integration runtime
 固定使用 Supervisor internal URL `http://afa94ae2-9space-snapshot-addon:8000`，config
@@ -394,7 +394,7 @@ scp -P "$HA_SSH_PORT" /tmp/nvr_monitor_layout_helper.sh \
 
 ssh -p "$HA_SSH_PORT" "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
-EXPECTED_VERSION="0.2.9"
+EXPECTED_VERSION="0.2.10"
 CUSTOM_COMPONENTS=/config/custom_components; CANONICAL="$CUSTOM_COMPONENTS/nvr_monitor"
 mkdir -p /config/9space_deploy
 ARTIFACT_DIR=$(mktemp -d /config/9space_deploy/nvr-monitor.XXXXXX)
@@ -590,7 +590,7 @@ REMOTE_SCRIPT
 
 Rollback 使用相同 helper；還原 integration source 後必須先通過 `ha core check` 才能重新啟動 Core。驗證完成後，以前述相同 path gate 清除原 deployment 與 rollback transaction，不在 `custom_components` 留 artifact。
 
-舊 entry data 若仍含 `addon_base_url`，0.2.9 runtime 會忽略它；不得直接覆寫或編輯
+舊 entry data 若仍含 `addon_base_url`，0.2.10 runtime 會忽略它；不得直接覆寫或編輯
 `.storage`。使用者日後經 UI Reconfigure 儲存時，該舊 key 會自然移除，entity identity
 不變。
 
