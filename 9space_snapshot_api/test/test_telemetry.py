@@ -16,10 +16,10 @@ ADDON_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ADDON_DIR))
 
 from telemetry import (
+    hub_telemetry_url,
     NvrTelemetryModel,
     TelemetryProducer,
-    safe_center_url,
-    safe_snapshot_base_url,
+    safe_hub_ip,
     safe_site_metadata,
     telemetry_channel_ids,
 )
@@ -76,11 +76,9 @@ class TelemetryProducerTests(unittest.IsolatedAsyncioTestCase):
     async def test_registration_is_attached_to_every_addon_batch(self) -> None:
         client = FakeCenterClient()
         registration = {
-            "base_url": "http://100.64.0.10:8222",
             "channels": [1, 2],
             "concurrency": 1,
             "timeout_seconds": 15,
-            "refresh_seconds": 30,
         }
         producer = TelemetryProducer(
             center_url="https://center.invalid/api/v1/telemetry",
@@ -384,42 +382,25 @@ class NvrTelemetryModelTests(unittest.TestCase):
         self.assertIsNone(safe_site_metadata("sample-site", "2001:db8::1"))
         self.assertIsNone(safe_site_metadata("sample-site", "A" * 80))
 
-    def test_center_destination_is_strict_and_channel_ids_are_capped(self) -> None:
+    def test_hub_ip_builds_one_fixed_destination_and_channel_ids_are_capped(self) -> None:
         self.assertEqual(
-            safe_center_url("https://center.invalid/api/v1/telemetry"),
-            "https://center.invalid/api/v1/telemetry",
+            hub_telemetry_url("site.example.ts.net"),
+            "http://site.example.ts.net:8765/api/v1/telemetry",
         )
+        self.assertEqual(safe_hub_ip("100.64.0.10"), "100.64.0.10")
         for value in (
-            "ftp://center.invalid/api/v1/telemetry",
-            "https://user@center.invalid/api/v1/telemetry",
-            "https://center.invalid/other",
-            "https://center.invalid/api/v1/telemetry?extra=1",
-            "https://center.invalid/api/v1/telemetry#fragment",
+            "",
+            "site",
+            "http://site.example.ts.net",
+            "site.example.ts.net:8765",
+            "site.example.ts.net/path",
+            "127.0.0.1",
+            "192.168.1.10",
         ):
             with self.subTest(value=value):
-                self.assertIsNone(safe_center_url(value))
+                self.assertIsNone(hub_telemetry_url(value))
         self.assertEqual(list(telemetry_channel_ids(0)), [])
         self.assertEqual(list(telemetry_channel_ids("not-an-int")), [])
         ids = telemetry_channel_ids(10_000)
         self.assertEqual(ids.start, 1)
         self.assertEqual(ids.stop, 4097)
-
-    def test_snapshot_base_url_is_tailnet_http_origin_only(self) -> None:
-        self.assertEqual(
-            safe_snapshot_base_url("http://100.64.0.10:8222/"),
-            "http://100.64.0.10:8222",
-        )
-        self.assertEqual(
-            safe_snapshot_base_url("https://site.example.ts.net/"),
-            "https://site.example.ts.net",
-        )
-        for value in (
-            "",
-            "http://user:pass@site.example.invalid:8222",
-            "http://site.example.invalid:8222/path",
-            "http://site.example.invalid:8222?token=x",
-            "http://127.0.0.1:8222",
-            "http://192.168.1.10:8222",
-        ):
-            with self.subTest(value=value):
-                self.assertIsNone(safe_snapshot_base_url(value))

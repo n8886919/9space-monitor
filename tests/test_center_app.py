@@ -17,15 +17,19 @@ from nine_space_monitor_hub.state import CurrentState
 from nine_space_monitor_hub.validation import MAX_BODY_BYTES
 
 
-async def asgi_request(app, method: str, path: str, *, chunks=None, content_length=True, pathsend=False):
+async def asgi_request(
+    app, method: str, path: str, *, chunks=None, content_length=True,
+    pathsend=False, client_host="127.0.0.1", extra_headers=(),
+):
     chunks = list(chunks or [])
     headers = [(b"content-type", b"application/json")]
     if content_length:
         headers.append((b"content-length", str(sum(map(len, chunks))).encode()))
+    headers.extend(extra_headers)
     scope = {
         "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
         "method": method, "scheme": "http", "path": path, "raw_path": path.encode(),
-        "query_string": b"", "headers": headers, "client": ("127.0.0.1", 1),
+        "query_string": b"", "headers": headers, "client": (client_host, 1),
         "server": ("hub.test", 80), "root_path": "",
         "extensions": {"http.response.pathsend": {}} if pathsend else {},
     }
@@ -122,14 +126,13 @@ class HubAppTests(unittest.TestCase):
         )
         payload = self.payload()
         payload["snapshot_registration"] = {
-            "base_url": "http://100.64.0.10:8222",
             "channels": [1, 2],
             "concurrency": 1,
             "timeout_seconds": 15,
-            "refresh_seconds": 30,
         }
         status, _headers, _body = asyncio.run(asgi_request(
-            app, "POST", "/api/v1/telemetry", chunks=[json.dumps(payload).encode()]
+            app, "POST", "/api/v1/telemetry", chunks=[json.dumps(payload).encode()],
+            client_host="100.64.0.10",
         ))
         self.assertEqual(status, 200)
         status, _headers, body = asyncio.run(asgi_request(app, "GET", "/api/v1/sites"))
@@ -137,6 +140,27 @@ class HubAppTests(unittest.TestCase):
         self.assertEqual(discovered[0]["site_id"], "safe-site")
         self.assertEqual([camera["camera_id"] for camera in discovered[0]["cameras"]], [1, 2])
         self.assertNotIn("base_url", json.dumps(discovered))
+        self.assertEqual(
+            app.state.scheduler.sites["safe-site"].base_url,
+            "http://100.64.0.10:8222",
+        )
+
+    def test_registration_rejects_non_tailnet_peer_and_ignores_forwarded_header(self):
+        app = create_app(
+            sites=(), snapshots=self.store, state=CurrentState(()),
+            max_stale_seconds=120,
+        )
+        payload = self.payload()
+        payload["snapshot_registration"] = {
+            "channels": [1], "concurrency": 1, "timeout_seconds": 15,
+        }
+        status, _headers, body = asyncio.run(asgi_request(
+            app, "POST", "/api/v1/telemetry", chunks=[json.dumps(payload).encode()],
+            client_host="172.18.0.2",
+            extra_headers=((b"x-forwarded-for", b"100.64.0.10"),),
+        ))
+        self.assertEqual(status, 422)
+        self.assertIn(b"invalid_snapshot_peer", body)
 
     def test_streaming_body_bound_and_sensitive_values_fail_closed(self):
         status, _headers, _body = self.request(

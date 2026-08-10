@@ -1,5 +1,5 @@
 name: 9Space Snapshot Addon
-version: "0.3.9"
+version: "0.3.10"
 slug: 9space_snapshot_addon
 description: >-
   Monorepo development instance of the 9Space local API. Adds /healthz and
@@ -29,13 +29,11 @@ options:
   max_concurrency: 1
   nvr_http_port: 80
   channel_count: 14
-  center_telemetry_url: ""
+  hub_ip: ""
   site_id: "chengde"
   site_display_name: "承德"
   telemetry_interval_seconds: 300
   telemetry_queue_max_batches: 100
-  hub_snapshot_base_url: ""
-  hub_snapshot_refresh_seconds: 30
 
 schema:
   nvr_host: str
@@ -48,10 +46,8 @@ schema:
   max_concurrency: int
   nvr_http_port: int
   channel_count: int
-  center_telemetry_url: str
+  hub_ip: str
   site_id: str
   site_display_name: str
   telemetry_interval_seconds: int
   telemetry_queue_max_batches: int
-  hub_snapshot_base_url: str
-  hub_snapshot_refresh_seconds: int

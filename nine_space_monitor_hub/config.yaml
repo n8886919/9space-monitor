@@ -1,5 +1,5 @@
 name: 9Space Monitor Hub
-version: "0.2.0"
+version: "0.3.0"
 slug: 9space_monitor_hub
 description: >-
   Central snapshot hub for 9Space sites. Keeps one last-good JPEG per camera;
@@ -20,6 +20,8 @@ ports:
 options:
   max_stale_seconds: 120
   snapshot_store_limit_mb: 1024
+  snapshot_refresh_seconds: 30
 schema:
   max_stale_seconds: int
   snapshot_store_limit_mb: int
+  snapshot_refresh_seconds: int

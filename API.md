@@ -249,7 +249,9 @@ Producer 規則：
 沿用既有 producer payload。Snapshot add-on 可附加嚴格驗證的
 `snapshot_registration`，Hub 先在 RAM 註冊／更新站點，再接受同一批 events；
 integration producer 不得附加此欄位。註冊不寫入磁碟，Hub restart 後由 producer
-下一批重新建立。
+下一批重新建立。registration 只包含 channels、concurrency 與 timeout，不接受 URL。
+Hub 以未套用 proxy headers 的實際 Tailscale TCP peer，加固定 port `8222` 建立
+Snapshot API origin；非 Tailscale peer 回 `422`。
 
 ### `GET /api/v1/sites`
 
@@ -275,7 +277,7 @@ Hub debug UI 每 site 一個分頁；所有 camera 顯示 last-good 圖片與目
 
 Hub scheduler 使用 Snapshot add-on 自動註冊的 channel list；不得假設 channel count 或
 命名。concurrency 沿用站點 `max_concurrency`，timeout 由 `health_timeout_ms` 加 bounded
-capture margin 換算，refresh 使用 `hub_snapshot_refresh_seconds`。例如 13 channels、
+capture margin 換算，refresh 使用 Hub 全域 `snapshot_refresh_seconds`。例如 13 channels、
 concurrency 4：
 `4/4/4/1`，完成一輪後等待 refresh interval。
 

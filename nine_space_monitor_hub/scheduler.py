@@ -40,13 +40,13 @@ class AttemptSink(Protocol):
     ) -> None: ...
 
 
-def load_options(path: str | Path = "/data/options.json") -> tuple[int, int]:
+def load_options(path: str | Path = "/data/options.json") -> tuple[int, int, int]:
     """Load validated Supervisor options without logging private site URLs."""
     try:
         with Path(path).open("rb") as handle:
             raw_bytes = handle.read(MAX_CONFIG_BYTES + 1)
     except FileNotFoundError:
-        return 120, 1024 * 1024 * 1024
+        return 120, 1024 * 1024 * 1024, 30
     if len(raw_bytes) > MAX_CONFIG_BYTES:
         raise ValueError("hub_options_too_large")
     try:
@@ -54,7 +54,7 @@ def load_options(path: str | Path = "/data/options.json") -> tuple[int, int]:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("invalid_hub_options") from exc
     required = {"max_stale_seconds", "snapshot_store_limit_mb"}
-    allowed = required | {"sites"}
+    allowed = required | {"sites", "snapshot_refresh_seconds"}
     if (
         not isinstance(raw, dict)
         or not required.issubset(raw)
@@ -63,11 +63,14 @@ def load_options(path: str | Path = "/data/options.json") -> tuple[int, int]:
         raise ValueError("invalid_hub_options")
     stale = raw["max_stale_seconds"]
     limit_mb = raw["snapshot_store_limit_mb"]
+    refresh = raw.get("snapshot_refresh_seconds", 30)
     if type(stale) is not int or not 0 <= stale <= 86400:
         raise ValueError("invalid_max_stale_seconds")
     if type(limit_mb) is not int or not 8 <= limit_mb <= 8192:
         raise ValueError("invalid_snapshot_store_limit")
-    return stale, limit_mb * 1024 * 1024
+    if type(refresh) is not int or not 5 <= refresh <= 86400:
+        raise ValueError("invalid_snapshot_refresh_seconds")
+    return stale, limit_mb * 1024 * 1024, refresh
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

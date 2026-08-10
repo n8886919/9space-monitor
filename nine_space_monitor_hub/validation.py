@@ -9,7 +9,6 @@ import json
 import math
 import re
 from typing import Any
-from urllib.parse import urlsplit
 
 MAX_BODY_BYTES = 512 * 1024
 MAX_BATCH_EVENTS = 500
@@ -212,11 +211,9 @@ class ValidatedEvent:
 
 @dataclass(frozen=True, slots=True)
 class SnapshotRegistration:
-    base_url: str
     channels: tuple[int, ...]
     concurrency: int
     timeout_seconds: int
-    refresh_seconds: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,29 +226,8 @@ class ValidatedBatch:
 
 
 def _validate_snapshot_registration(value: Any) -> SnapshotRegistration:
-    expected = {"base_url", "channels", "concurrency", "timeout_seconds", "refresh_seconds"}
+    expected = {"channels", "concurrency", "timeout_seconds"}
     if not isinstance(value, dict) or set(value) != expected:
-        raise TelemetryValidationError("invalid_snapshot_registration")
-    base_url = value["base_url"]
-    try:
-        parsed = urlsplit(base_url) if isinstance(base_url, str) else None
-        port = parsed.port if parsed else None
-    except ValueError:
-        raise TelemetryValidationError("invalid_snapshot_registration") from None
-    hostname = parsed.hostname if parsed else ""
-    try:
-        address = ipaddress.ip_address(hostname)
-        tailnet_host = address in ipaddress.ip_network("100.64.0.0/10") or address in ipaddress.ip_network(
-            "fd7a:115c:a1e0::/48"
-        )
-    except ValueError:
-        tailnet_host = hostname.lower().endswith(".ts.net")
-    if (
-        not parsed or parsed.scheme not in {"http", "https"} or not parsed.hostname
-        or not tailnet_host
-        or parsed.username or parsed.password or parsed.query or parsed.fragment
-        or parsed.path not in {"", "/"} or port is not None and not 1 <= port <= 65535
-    ):
         raise TelemetryValidationError("invalid_snapshot_registration")
     channels = value["channels"]
     if (
@@ -262,14 +238,12 @@ def _validate_snapshot_registration(value: Any) -> SnapshotRegistration:
         raise TelemetryValidationError("invalid_snapshot_registration")
     concurrency = value["concurrency"]
     timeout = value["timeout_seconds"]
-    refresh = value["refresh_seconds"]
     if (
         type(concurrency) is not int or not 1 <= concurrency <= 8
         or type(timeout) is not int or not 2 <= timeout <= 60
-        or type(refresh) is not int or not 5 <= refresh <= 86400
     ):
         raise TelemetryValidationError("invalid_snapshot_registration")
-    return SnapshotRegistration(base_url.rstrip("/"), tuple(channels), concurrency, timeout, refresh)
+    return SnapshotRegistration(tuple(channels), concurrency, timeout)
 
 
 def _parse_timestamp(value: Any, field: str) -> int:

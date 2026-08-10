@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.10 - 2026-08-10
+
+- Replaced three Hub-specific URL/refresh options with one `hub_ip` hostname.
+- Fixed telemetry scheme, port, and ingest path in code.
+- Removed the site Snapshot API URL from registration; Hub now derives the
+  fixed port `8222` origin from the actual Tailscale TCP peer.
+
 ## 0.3.9 - 2026-08-10
 
 - Added runtime-only Hub snapshot registration to add-on telemetry batches.

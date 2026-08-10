@@ -16,6 +16,7 @@ class HubAddonContractTests(unittest.TestCase):
         self.assertIn("ingress_port: 8765", config)
         self.assertIn("ingress: true", config)
         self.assertIn("8765/tcp: 8765", config)
+        self.assertIn("snapshot_refresh_seconds: 30", config)
         self.assertNotIn("sites:", config)
 
     def test_container_runs_hub_package_and_has_no_sqlite_runtime(self):
@@ -24,6 +25,7 @@ class HubAddonContractTests(unittest.TestCase):
         requirements = (HUB / "requirements.txt").read_text().lower()
         self.assertIn("ghcr.io/home-assistant/base", dockerfile)
         self.assertIn("nine_space_monitor_hub.app:app", run)
+        self.assertIn("--no-proxy-headers", run)
         self.assertNotIn("sqlite", requirements)
         self.assertFalse((HUB / "storage.py").exists())
         self.assertFalse((HUB / "compose.yaml").exists())

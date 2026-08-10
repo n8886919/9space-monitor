@@ -19,10 +19,17 @@ class SchedulerTests(unittest.TestCase):
             path = os.path.join(root, "options.json")
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump({"max_stale_seconds": 120, "snapshot_store_limit_mb": 64}, handle)
-            self.assertEqual(load_options(path), (120, 64 * 1024 * 1024))
+            self.assertEqual(load_options(path), (120, 64 * 1024 * 1024, 30))
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump({"sites": [], "max_stale_seconds": 120, "snapshot_store_limit_mb": 64}, handle)
-            self.assertEqual(load_options(path), (120, 64 * 1024 * 1024))
+            self.assertEqual(load_options(path), (120, 64 * 1024 * 1024, 30))
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "max_stale_seconds": 120,
+                    "snapshot_store_limit_mb": 64,
+                    "snapshot_refresh_seconds": 45,
+                }, handle)
+            self.assertEqual(load_options(path), (120, 64 * 1024 * 1024, 45))
 
     def test_runtime_registration_is_bounded(self):
         sites = tuple(

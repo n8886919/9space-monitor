@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+import ipaddress
 import json
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
@@ -24,21 +25,40 @@ SNAPSHOT_ROOT = (
     else "/tmp/9space-monitor-hub-snapshots"
 )
 STATIC_ROOT = Path(__file__).with_name("static")
+TAILSCALE_V4 = ipaddress.ip_network("100.64.0.0/10")
+TAILSCALE_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
+
+
+def _snapshot_base_from_peer(request: Request) -> str:
+    """Build the fixed site API origin from the actual TCP peer, never headers."""
+    peer = request.client.host if request.client is not None else ""
+    try:
+        address = ipaddress.ip_address(peer)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="invalid_snapshot_peer") from None
+    if address not in TAILSCALE_V4 and address not in TAILSCALE_V6:
+        raise HTTPException(status_code=422, detail="invalid_snapshot_peer")
+    host = f"[{address}]" if address.version == 6 else str(address)
+    return f"http://{host}:8222"
 
 
 def create_app(
     *,
     sites: tuple[SnapshotSite, ...] | None = None,
     max_stale_seconds: int | None = None,
+    snapshot_refresh_seconds: int | None = None,
     snapshots: SnapshotStore | None = None,
     state: CurrentState | None = None,
     run_sync: Callable[..., Awaitable[Any]] | None = None,
 ) -> FastAPI:
-    configured_stale, store_limit = (
-        load_options(OPTIONS_PATH) if sites is None else (120, 1024 * 1024 * 1024)
+    configured_stale, store_limit, configured_refresh = (
+        load_options(OPTIONS_PATH) if sites is None else (120, 1024 * 1024 * 1024, 30)
     )
     active_sites = () if sites is None else sites
     stale_seconds = configured_stale if max_stale_seconds is None else max_stale_seconds
+    refresh_seconds = (
+        configured_refresh if snapshot_refresh_seconds is None else snapshot_refresh_seconds
+    )
     snapshot_store = snapshots or SnapshotStore(SNAPSHOT_ROOT, store_limit_bytes=store_limit)
     current_state = state or CurrentState(active_sites)
 
@@ -57,7 +77,7 @@ def create_app(
         finally:
             await scheduler.stop()
 
-    app = FastAPI(title="9Space Monitor Hub", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="9Space Monitor Hub", version="0.3.0", lifespan=lifespan)
     app.state.run_sync = run_sync or asyncio.to_thread
     app.state.snapshots = snapshot_store
     app.state.current = current_state
@@ -110,11 +130,11 @@ def create_app(
             site = SnapshotSite(
                 batch.site_id,
                 batch.display_name,
-                registration.base_url,
+                _snapshot_base_from_peer(request),
                 registration.channels,
                 registration.concurrency,
                 registration.timeout_seconds,
-                registration.refresh_seconds,
+                refresh_seconds,
             )
             if not request.app.state.current.register(site):
                 raise HTTPException(status_code=422, detail="site_limit_reached")

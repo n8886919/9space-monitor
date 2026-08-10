@@ -21,6 +21,7 @@ Hub 本身只保留全域 snapshot freshness 與容量設定：
 ```yaml
 max_stale_seconds: 120
 snapshot_store_limit_mb: 1024
+snapshot_refresh_seconds: 30
 ```
 
 站點資料由各站 Snapshot add-on 隨 telemetry 自動註冊。Snapshot add-on options 中：
@@ -28,12 +29,14 @@ snapshot_store_limit_mb: 1024
 - `site_id`、`site_display_name`、`channel_count` 提供站點與 channel mapping。
 - `max_concurrency` 直接作為 Hub 拉圖 concurrency。
 - Hub timeout 由 `health_timeout_ms` 換算並加 5 秒 capture margin，限制在 2–60 秒。
-- `hub_snapshot_refresh_seconds` 控制 Hub 拉圖週期。
-- `hub_snapshot_base_url` 是 Hub 可連線的 Snapshot API Tailscale origin，只接受
-  `100.64.0.0/10`、Tailscale IPv6 或 `*.ts.net`，不得包含 credentials、path、query。
+- `hub_ip` 只填中央 Hub 的 Tailscale IPv4 或完整 `*.ts.net` hostname。Snapshot
+  add-on 固定使用 HTTP、port `8765` 與 `/api/v1/telemetry`，不接受 scheme、port 或 path。
+- Hub 只從實際 TCP peer 推導 `http://<peer>:8222`，不接受 producer URL 或 proxy
+  headers；peer 不是 Tailscale IPv4／IPv6 時拒絕自動註冊。
 
-舊版 Hub 已保存的 `sites` option 在升級時只為相容而忽略。真實 URL 只放
-Supervisor options，不提交到 Git，也不出現在 discovery API。
+舊版 Hub 已保存的 `sites` option，以及 Snapshot add-on 的舊
+`center_telemetry_url`／`hub_snapshot_*` options，在升級時只為相容而忽略。
+真實 hostname 只放 Supervisor options，不提交到 Git，也不出現在 discovery API。
 
 ## API
 

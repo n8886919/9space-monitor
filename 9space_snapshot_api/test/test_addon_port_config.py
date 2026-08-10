@@ -32,6 +32,12 @@ class AddonPortConfigTests(unittest.TestCase):
         # The old (wrong) option name must not reappear.
         self.assertNotRegex(CONFIG_YAML, r"(?m)^\s*http_port:")
 
+    def test_hub_destination_is_one_hostname_only_option(self) -> None:
+        self.assertRegex(CONFIG_YAML, r'(?m)^\s*hub_ip:\s*""\s*$')
+        self.assertRegex(CONFIG_YAML, r"(?m)^\s*hub_ip:\s*str\s*$")
+        for old in ("center_telemetry_url", "hub_snapshot_base_url", "hub_snapshot_refresh_seconds"):
+            self.assertNotIn(old, CONFIG_YAML)
+
     def test_run_sh_starts_uvicorn_on_fixed_port_8000(self) -> None:
         self.assertRegex(RUN_SH, r"uvicorn main:app .*--port 8000\b")
 

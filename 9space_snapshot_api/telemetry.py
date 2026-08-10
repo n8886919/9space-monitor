@@ -15,7 +15,6 @@ import ipaddress
 import json
 import re
 from typing import Any, Protocol
-from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -120,59 +119,50 @@ def safe_site_metadata(site_id: object, display_name: object) -> tuple[str, str]
     return site_id, display_name.strip()
 
 
-def safe_center_url(value: object) -> str | None:
-    """Allow only the fixed ingest destination; the host may be a tailnet IP."""
-    if not isinstance(value, str) or len(value) > 2048 or _FORBIDDEN_WORD_RE.search(value):
+def safe_hub_ip(value: object) -> str | None:
+    """Accept one Tailscale host only; scheme, port and path are fixed in code."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > 253
+        or value != value.strip()
+        or _FORBIDDEN_WORD_RE.search(value)
+    ):
         return None
     try:
-        parsed = urlsplit(value)
-        port = parsed.port
+        address = ipaddress.ip_address(value)
+        allowed = (
+            address in ipaddress.ip_network("100.64.0.0/10")
+            or address in ipaddress.ip_network("fd7a:115c:a1e0::/48")
+        )
     except ValueError:
-        return None
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-        or parsed.path != "/api/v1/telemetry"
-        or port is not None and not 1 <= port <= 65535
-    ):
+        labels = value.lower().split(".")
+        allowed = (
+            value == value.lower()
+            and value.endswith(".ts.net")
+            and all(
+                label
+                and len(label) <= 63
+                and label.strip("abcdefghijklmnopqrstuvwxyz0123456789-") == ""
+                for label in labels
+            )
+            and all(not label.startswith("-") and not label.endswith("-") for label in labels)
+        )
+    if not allowed:
         return None
     return value
 
 
-def safe_snapshot_base_url(value: object) -> str | None:
-    """Validate the Tailscale origin advertised to Hub without logging it."""
-    if not isinstance(value, str) or not value or len(value) > 2048:
+def hub_telemetry_url(value: object) -> str | None:
+    host = safe_hub_ip(value)
+    if host is None:
         return None
     try:
-        parsed = urlsplit(value)
-        port = parsed.port
+        address = ipaddress.ip_address(host)
+        formatted = f"[{address}]" if address.version == 6 else str(address)
     except ValueError:
-        return None
-    hostname = parsed.hostname or ""
-    try:
-        address = ipaddress.ip_address(hostname)
-        tailnet_host = address in ipaddress.ip_network("100.64.0.0/10") or address in ipaddress.ip_network(
-            "fd7a:115c:a1e0::/48"
-        )
-    except ValueError:
-        tailnet_host = hostname.lower().endswith(".ts.net")
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.hostname
-        or not tailnet_host
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-        or parsed.path not in {"", "/"}
-        or port is not None and not 1 <= port <= 65535
-    ):
-        return None
-    return value.rstrip("/")
+        formatted = host
+    return f"http://{formatted}:8765/api/v1/telemetry"
 
 
 def telemetry_channel_ids(channel_count: object) -> range:
