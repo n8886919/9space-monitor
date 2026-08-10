@@ -110,7 +110,9 @@ Hub add-on 由同一 Supervisor managed repository 的 `nine_space_monitor_hub/`
 
 Hub options 只保留全域 freshness、refresh interval 與 snapshot store 限制。每站
 Snapshot add-on 只需設定一個 `hub_ip`，scheme、port `8765` 與 telemetry path 固定；
-Hub 從實際 Tailscale TCP peer 自動推導站點 Snapshot API 的固定 port `8222`。
+Hub 從實際 Tailscale TCP peer 自動推導站點 Snapshot API 的固定 port `8222`；若
+Supervisor NAT 隱藏 peer，則從 Hub MagicDNS suffix 與 `site_id` 推導站點 hostname，
+因此 `site_id` 必須等於 Tailscale machine name。
 site/display/channel/concurrency/timeout 沿用既有站點設定。真實 hostname 不提交 Git。安裝後以
 `ha apps info <actual_slug>` 確認實際 slug 與 internal hostname，再把
 `custom_components/nine_space_monitor_hub/` 以 scoped transaction 安裝到中央 HA。

@@ -1,5 +1,5 @@
 name: 9Space Monitor Hub
-version: "0.3.0"
+version: "0.3.1"
 slug: 9space_monitor_hub
 description: >-
   Central snapshot hub for 9Space sites. Keeps one last-good JPEG per camera;

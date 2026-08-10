@@ -31,8 +31,10 @@ snapshot_refresh_seconds: 30
 - Hub timeout 由 `health_timeout_ms` 換算並加 5 秒 capture margin，限制在 2–60 秒。
 - `hub_ip` 只填中央 Hub 的 Tailscale IPv4 或完整 `*.ts.net` hostname。Snapshot
   add-on 固定使用 HTTP、port `8765` 與 `/api/v1/telemetry`，不接受 scheme、port 或 path。
-- Hub 只從實際 TCP peer 推導 `http://<peer>:8222`，不接受 producer URL 或 proxy
-  headers；peer 不是 Tailscale IPv4／IPv6 時拒絕自動註冊。
+- Hub 優先從實際 Tailscale TCP peer 推導 `http://<peer>:8222`，不接受 producer URL
+  或 proxy headers。Supervisor NAT 隱藏 peer 時，改從 telemetry request 的完整 Hub
+  MagicDNS `Host` 取得 tailnet suffix，以 `site_id` 組成站點 MagicDNS；因此 `site_id`
+  必須與 Tailscale machine name 相同。
 
 舊版 Hub 已保存的 `sites` option，以及 Snapshot add-on 的舊
 `center_telemetry_url`／`hub_snapshot_*` options，在升級時只為相容而忽略。

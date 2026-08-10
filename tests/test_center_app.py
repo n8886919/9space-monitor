@@ -162,6 +162,26 @@ class HubAppTests(unittest.TestCase):
         self.assertEqual(status, 422)
         self.assertIn(b"invalid_snapshot_peer", body)
 
+    def test_nat_peer_uses_hub_magicdns_suffix_and_site_id(self):
+        app = create_app(
+            sites=(), snapshots=self.store, state=CurrentState(()),
+            max_stale_seconds=120,
+        )
+        payload = self.payload()
+        payload["snapshot_registration"] = {
+            "channels": [1], "concurrency": 1, "timeout_seconds": 15,
+        }
+        status, _headers, _body = asyncio.run(asgi_request(
+            app, "POST", "/api/v1/telemetry", chunks=[json.dumps(payload).encode()],
+            client_host="172.18.0.2",
+            extra_headers=((b"host", b"hub.example-tail.ts.net:8765"),),
+        ))
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            app.state.scheduler.sites["safe-site"].base_url,
+            "http://safe-site.example-tail.ts.net:8222",
+        )
+
     def test_streaming_body_bound_and_sensitive_values_fail_closed(self):
         status, _headers, _body = self.request(
             "POST", "/api/v1/telemetry", chunks=[b"x" * (MAX_BODY_BYTES + 1)], content_length=False

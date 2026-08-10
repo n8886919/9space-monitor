@@ -8,6 +8,7 @@ import ipaddress
 import json
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -29,17 +30,34 @@ TAILSCALE_V4 = ipaddress.ip_network("100.64.0.0/10")
 TAILSCALE_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 
 
-def _snapshot_base_from_peer(request: Request) -> str:
-    """Build the fixed site API origin from the actual TCP peer, never headers."""
+def _snapshot_base_from_request(request: Request, site_id: str) -> str:
+    """Build the fixed site API origin from a peer IP or Hub MagicDNS suffix."""
     peer = request.client.host if request.client is not None else ""
     try:
         address = ipaddress.ip_address(peer)
     except ValueError:
+        address = None
+    if address is not None and (address in TAILSCALE_V4 or address in TAILSCALE_V6):
+        host = f"[{address}]" if address.version == 6 else str(address)
+        return f"http://{host}:8222"
+
+    raw_host = request.headers.get("host", "")
+    try:
+        parsed = urlsplit(f"//{raw_host}")
+        hostname = (parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
         raise HTTPException(status_code=422, detail="invalid_snapshot_peer") from None
-    if address not in TAILSCALE_V4 and address not in TAILSCALE_V6:
+    labels = hostname.split(".")
+    if (
+        port != 8765
+        or len(labels) < 4
+        or labels[-2:] != ["ts", "net"]
+        or not all(labels)
+    ):
         raise HTTPException(status_code=422, detail="invalid_snapshot_peer")
-    host = f"[{address}]" if address.version == 6 else str(address)
-    return f"http://{host}:8222"
+    tailnet_suffix = ".".join(labels[1:])
+    return f"http://{site_id}.{tailnet_suffix}:8222"
 
 
 def create_app(
@@ -77,7 +95,7 @@ def create_app(
         finally:
             await scheduler.stop()
 
-    app = FastAPI(title="9Space Monitor Hub", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="9Space Monitor Hub", version="0.3.1", lifespan=lifespan)
     app.state.run_sync = run_sync or asyncio.to_thread
     app.state.snapshots = snapshot_store
     app.state.current = current_state
@@ -130,7 +148,7 @@ def create_app(
             site = SnapshotSite(
                 batch.site_id,
                 batch.display_name,
-                _snapshot_base_from_peer(request),
+                _snapshot_base_from_request(request, batch.site_id),
                 registration.channels,
                 registration.concurrency,
                 registration.timeout_seconds,
