@@ -28,9 +28,12 @@ SNAPSHOT_ROOT = (
 STATIC_ROOT = Path(__file__).with_name("static")
 TAILSCALE_V4 = ipaddress.ip_network("100.64.0.0/10")
 TAILSCALE_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
+LOCAL_SNAPSHOT_HOSTNAME = "afa94ae2-9space-snapshot-addon"
 
 
-def _snapshot_base_from_request(request: Request, site_id: str) -> str:
+def _snapshot_base_from_request(
+    request: Request, site_id: str, registered_site_ip: str | None
+) -> str:
     """Build the fixed site API origin from a peer IP or Hub MagicDNS suffix."""
     peer = request.client.host if request.client is not None else ""
     try:
@@ -56,8 +59,18 @@ def _snapshot_base_from_request(request: Request, site_id: str) -> str:
         or not all(labels)
     ):
         raise HTTPException(status_code=422, detail="invalid_snapshot_peer")
-    tailnet_suffix = ".".join(labels[1:])
-    return f"http://{site_id}.{tailnet_suffix}:8222"
+    if site_id == labels[0]:
+        return f"http://{LOCAL_SNAPSHOT_HOSTNAME}:8000"
+    if registered_site_ip is None:
+        raise HTTPException(status_code=422, detail="invalid_snapshot_peer")
+    try:
+        site_address = ipaddress.ip_address(registered_site_ip)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="invalid_snapshot_peer") from None
+    if site_address not in TAILSCALE_V4 and site_address not in TAILSCALE_V6:
+        raise HTTPException(status_code=422, detail="invalid_snapshot_peer")
+    host = f"[{site_address}]" if site_address.version == 6 else str(site_address)
+    return f"http://{host}:8222"
 
 
 def create_app(
@@ -95,7 +108,7 @@ def create_app(
         finally:
             await scheduler.stop()
 
-    app = FastAPI(title="9Space Monitor Hub", version="0.3.1", lifespan=lifespan)
+    app = FastAPI(title="9Space Monitor Hub", version="0.3.2", lifespan=lifespan)
     app.state.run_sync = run_sync or asyncio.to_thread
     app.state.snapshots = snapshot_store
     app.state.current = current_state
@@ -148,7 +161,9 @@ def create_app(
             site = SnapshotSite(
                 batch.site_id,
                 batch.display_name,
-                _snapshot_base_from_request(request, batch.site_id),
+                _snapshot_base_from_request(
+                    request, batch.site_id, registration.site_ip
+                ),
                 registration.channels,
                 registration.concurrency,
                 registration.timeout_seconds,

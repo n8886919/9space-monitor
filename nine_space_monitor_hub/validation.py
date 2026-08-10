@@ -214,6 +214,7 @@ class SnapshotRegistration:
     channels: tuple[int, ...]
     concurrency: int
     timeout_seconds: int
+    site_ip: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,7 +227,7 @@ class ValidatedBatch:
 
 
 def _validate_snapshot_registration(value: Any) -> SnapshotRegistration:
-    expected = {"channels", "concurrency", "timeout_seconds"}
+    expected = {"channels", "concurrency", "timeout_seconds", "site_ip"}
     if not isinstance(value, dict) or set(value) != expected:
         raise TelemetryValidationError("invalid_snapshot_registration")
     channels = value["channels"]
@@ -238,12 +239,24 @@ def _validate_snapshot_registration(value: Any) -> SnapshotRegistration:
         raise TelemetryValidationError("invalid_snapshot_registration")
     concurrency = value["concurrency"]
     timeout = value["timeout_seconds"]
+    site_ip = value["site_ip"]
     if (
         type(concurrency) is not int or not 1 <= concurrency <= 8
         or type(timeout) is not int or not 2 <= timeout <= 60
     ):
         raise TelemetryValidationError("invalid_snapshot_registration")
-    return SnapshotRegistration(tuple(channels), concurrency, timeout)
+    if site_ip is not None:
+        try:
+            address = ipaddress.ip_address(site_ip)
+        except ValueError:
+            raise TelemetryValidationError("invalid_snapshot_registration") from None
+        if (
+            address not in ipaddress.ip_network("100.64.0.0/10")
+            and address not in ipaddress.ip_network("fd7a:115c:a1e0::/48")
+        ):
+            raise TelemetryValidationError("invalid_snapshot_registration")
+        site_ip = str(address)
+    return SnapshotRegistration(tuple(channels), concurrency, timeout, site_ip)
 
 
 def _parse_timestamp(value: Any, field: str) -> int:

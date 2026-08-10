@@ -27,6 +27,7 @@ class SnapshotConcurrencyTests(unittest.TestCase):
             "channels": [1, 2, 3],
             "concurrency": 2,
             "timeout_seconds": 7,
+            "site_ip": None,
         })
 
     def test_hub_registration_is_optional_and_bad_bounds_fall_back(self) -> None:

@@ -249,10 +249,12 @@ Producer 規則：
 沿用既有 producer payload。Snapshot add-on 可附加嚴格驗證的
 `snapshot_registration`，Hub 先在 RAM 註冊／更新站點，再接受同一批 events；
 integration producer 不得附加此欄位。註冊不寫入磁碟，Hub restart 後由 producer
-下一批重新建立。registration 只包含 channels、concurrency 與 timeout，不接受 URL。
-Hub 以未套用 proxy headers 的實際 Tailscale TCP peer，加固定 port `8222` 建立
-Snapshot API origin。Supervisor NAT 隱藏 peer 時，Hub 從 request `Host` 的完整
-MagicDNS tailnet suffix 與 `site_id` 推導站點 hostname；兩者皆無法安全驗證時回 `422`。
+下一批重新建立。registration 只包含 channels、concurrency、timeout 與 add-on
+自動解析的 Tailscale site address，不接受 URL，也不在 discovery API、logs 或狀態
+輸出該 address。Hub 以未套用 proxy headers 的實際 Tailscale TCP peer，加固定 port
+`8222` 建立 Snapshot API origin。Supervisor NAT 隱藏 peer 時使用已驗證的
+registration address；同機 site 使用 Supervisor internal Snapshot hostname。
+無法安全驗證時回 `422`。
 
 ### `GET /api/v1/sites`
 

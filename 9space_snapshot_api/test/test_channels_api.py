@@ -94,10 +94,8 @@ class AddonApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), {"status": "ok"})
 
-    def test_nvr_http_port_option_does_not_affect_app_behaviour(self) -> None:
-        # nvr_http_port configures the Dahua NVR's own HTTP/CGI port, not the
-        # add-on's uvicorn listen port. main.py must never read it, so
-        # changing its value cannot change any response here.
+    def test_stale_removed_port_option_does_not_affect_app_behaviour(self) -> None:
+        # Supervisor may retain an old key during upgrade; runtime ignores it.
         alt_opts = dict(FAKE_OPTS)
         alt_opts["nvr_http_port"] = 8080
         with patch.object(main, "_load_options", return_value=alt_opts):

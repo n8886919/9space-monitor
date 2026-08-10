@@ -21,6 +21,7 @@ from typing import Awaitable, Callable, Iterable, Optional
 
 import live_probe
 import recording_query
+from constants import NVR_HTTP_PORT, NVR_RTSP_PORT
 from channel_state import ChannelStateStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,7 +122,7 @@ async def live_probe_loop(
         opts = get_options()
         nvr = live_probe.NvrConfig(
             host=str(opts.get("nvr_host") or "127.0.0.1"),
-            port=int(opts.get("rtsp_port") or 554),
+            port=NVR_RTSP_PORT,
             username=str(opts.get("username") or "admin"),
             password=str(opts.get("password") or ""),
         )
@@ -161,7 +162,7 @@ async def recording_query_loop(
         opts = get_options()
         nvr = recording_query.NvrHttpConfig(
             host=str(opts.get("nvr_host") or "127.0.0.1"),
-            http_port=int(opts.get("nvr_http_port") or 80),
+            http_port=NVR_HTTP_PORT,
             username=str(opts.get("username") or "admin"),
             password=str(opts.get("password") or ""),
         )

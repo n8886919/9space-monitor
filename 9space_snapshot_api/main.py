@@ -13,10 +13,11 @@ from fastapi.responses import JSONResponse
 
 import background
 from channel_state import ChannelStateStore
+from constants import NVR_RTSP_PORT
 from telemetry import (
     NvrTelemetryModel,
     TelemetryProducer,
-    hub_telemetry_url,
+    hub_telemetry_destination,
     safe_site_metadata,
     telemetry_channel_ids,
 )
@@ -31,7 +32,7 @@ OPTIONS_PATH = "/data/options.json"
 QUEUE_TIMEOUT_MS = 300
 DEFAULT_SNAPSHOT_CONCURRENCY = 1
 MAX_SNAPSHOT_CONCURRENCY = 8
-ADDON_VERSION = "0.3.10"
+ADDON_VERSION = "0.3.11"
 
 _sem: Optional[asyncio.Semaphore] = None
 
@@ -61,19 +62,29 @@ async def _telemetry_loop() -> None:
     either background NVR loop.
     """
     opts = _load_options()
-    center_url = hub_telemetry_url(opts.get("hub_ip"))
     metadata = safe_site_metadata(opts.get("site_id"), opts.get("site_display_name"))
-    if center_url is None or metadata is None:
+    if metadata is None:
         return
     site_id, display_name = metadata
+    destination = await asyncio.to_thread(
+        hub_telemetry_destination, opts.get("hub_ip"), site_id
+    )
+    while destination is None:
+        await asyncio.sleep(30)
+        opts = _load_options()
+        destination = await asyncio.to_thread(
+            hub_telemetry_destination, opts.get("hub_ip"), site_id
+        )
+    center_url, center_host_header, site_ip = destination
     # A 30-second lower bound prevents a stale option from flooding Center.
     interval_seconds = max(30, int(_opt(opts, "telemetry_interval_seconds", 300)))
     producer = TelemetryProducer(
         center_url=center_url,
+        center_host_header=center_host_header,
         site_id=site_id,
         display_name=display_name,
         queue_max_batches=max(1, int(_opt(opts, "telemetry_queue_max_batches", 100))),
-        registration=_hub_snapshot_registration(opts),
+        registration=_hub_snapshot_registration(opts, site_ip=site_ip),
     )
     model = NvrTelemetryModel()
     producer.start()
@@ -141,7 +152,7 @@ def _snapshot_concurrency(opts: dict) -> int:
     return min(value, MAX_SNAPSHOT_CONCURRENCY)
 
 
-def _hub_snapshot_registration(opts: dict) -> dict | None:
+def _hub_snapshot_registration(opts: dict, *, site_ip: str | None = None) -> dict | None:
     """Derive Hub scheduling from existing local options, fail closed on bad input."""
     channels = list(telemetry_channel_ids(opts.get("channel_count")))
     if not channels:
@@ -153,12 +164,13 @@ def _hub_snapshot_registration(opts: dict) -> dict | None:
         "channels": channels,
         "concurrency": _snapshot_concurrency(opts),
         "timeout_seconds": min(60, max(2, (timeout_ms + 999) // 1000 + 5)),
+        "site_ip": site_ip,
     }
 
 
 def _build_rtsp_url(opts: dict, camera_id: str) -> str:
     host = _opt(opts, "nvr_host", "127.0.0.1")
-    port = int(_opt(opts, "rtsp_port", 554))
+    port = NVR_RTSP_PORT
     user = _opt(opts, "username", "admin")
     pwd = _opt(opts, "password", "")
     subtype = int(_opt(opts, "subtype", 0))

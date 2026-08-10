@@ -14,8 +14,11 @@ import hashlib
 import ipaddress
 import json
 import re
+import subprocess
 from typing import Any, Protocol
 from urllib.request import Request, urlopen
+
+from constants import HUB_TELEMETRY_PORT, LOCAL_HUB_HOSTNAME, MAGICDNS_SERVER
 
 
 DEFAULT_QUEUE_MAX_BATCHES = 100
@@ -72,11 +75,20 @@ class CenterClient(Protocol):
 class UrllibCenterClient:
     """Small dependency-free client; errors intentionally carry no payload log."""
 
+    def __init__(self, *, host_header: str | None = None) -> None:
+        self._host_header = host_header
+
+    def request(self, url: str, body: bytes) -> Request:
+        headers = {"Content-Type": "application/json"}
+        if self._host_header is not None:
+            headers["Host"] = self._host_header
+        return Request(url, data=body, headers=headers)
+
     async def post(self, url: str, payload: dict[str, Any], timeout_seconds: float) -> None:
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
         def _send() -> None:
-            request = Request(url, data=body, headers={"Content-Type": "application/json"})
+            request = self.request(url, body)
             with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310 - URL is local add-on config
                 if not 200 <= response.status < 300:
                     raise OSError("center_rejected_batch")
@@ -120,7 +132,7 @@ def safe_site_metadata(site_id: object, display_name: object) -> tuple[str, str]
 
 
 def safe_hub_ip(value: object) -> str | None:
-    """Accept one Tailscale host only; scheme, port and path are fixed in code."""
+    """Accept one full Tailscale MagicDNS hostname only."""
     if (
         not isinstance(value, str)
         or not value
@@ -129,40 +141,77 @@ def safe_hub_ip(value: object) -> str | None:
         or _FORBIDDEN_WORD_RE.search(value)
     ):
         return None
-    try:
-        address = ipaddress.ip_address(value)
-        allowed = (
-            address in ipaddress.ip_network("100.64.0.0/10")
-            or address in ipaddress.ip_network("fd7a:115c:a1e0::/48")
+    labels = value.lower().split(".")
+    allowed = (
+        value == value.lower()
+        and len(labels) >= 4
+        and value.endswith(".ts.net")
+        and all(
+            label
+            and len(label) <= 63
+            and label.strip("abcdefghijklmnopqrstuvwxyz0123456789-") == ""
+            for label in labels
         )
-    except ValueError:
-        labels = value.lower().split(".")
-        allowed = (
-            value == value.lower()
-            and value.endswith(".ts.net")
-            and all(
-                label
-                and len(label) <= 63
-                and label.strip("abcdefghijklmnopqrstuvwxyz0123456789-") == ""
-                for label in labels
-            )
-            and all(not label.startswith("-") and not label.endswith("-") for label in labels)
-        )
+        and all(not label.startswith("-") and not label.endswith("-") for label in labels)
+    )
     if not allowed:
         return None
     return value
 
 
-def hub_telemetry_url(value: object) -> str | None:
-    host = safe_hub_ip(value)
-    if host is None:
+def resolve_magicdns_ipv4(hostname: str) -> str | None:
+    """Resolve one validated MagicDNS name without using container DNS config."""
+    if safe_hub_ip(hostname) is None:
         return None
     try:
-        address = ipaddress.ip_address(host)
-        formatted = f"[{address}]" if address.version == 6 else str(address)
-    except ValueError:
-        formatted = host
-    return f"http://{formatted}:8765/api/v1/telemetry"
+        result = subprocess.run(
+            ["nslookup", hostname, MAGICDNS_SERVER],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    for candidate in reversed(_IPV4_CANDIDATE_RE.findall(result.stdout)):
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if candidate != MAGICDNS_SERVER and address in ipaddress.ip_network("100.64.0.0/10"):
+            return candidate
+    return None
+
+
+def hub_telemetry_destination(
+    value: object,
+    site_id: str,
+    *,
+    resolver=resolve_magicdns_ipv4,
+) -> tuple[str, str, str | None] | None:
+    """Return connect URL, preserved MagicDNS Host header, and remote site IP."""
+    hub_host = safe_hub_ip(value)
+    if hub_host is None:
+        return None
+    labels = hub_host.split(".")
+    host_header = f"{hub_host}:{HUB_TELEMETRY_PORT}"
+    if site_id == labels[0]:
+        return (
+            f"http://{LOCAL_HUB_HOSTNAME}:{HUB_TELEMETRY_PORT}/api/v1/telemetry",
+            host_header,
+            None,
+        )
+    hub_address = resolver(hub_host)
+    site_address = resolver(f"{site_id}.{'.'.join(labels[1:])}")
+    if hub_address is None or site_address is None:
+        return None
+    return (
+        f"http://{hub_address}:{HUB_TELEMETRY_PORT}/api/v1/telemetry",
+        host_header,
+        site_address,
+    )
 
 
 def telemetry_channel_ids(channel_count: object) -> range:
@@ -306,6 +355,7 @@ class TelemetryProducer:
         self,
         *,
         center_url: str,
+        center_host_header: str | None = None,
         site_id: str,
         display_name: str,
         client: CenterClient | None = None,
@@ -317,7 +367,7 @@ class TelemetryProducer:
         self._center_url = center_url
         self._site_id = site_id
         self._display_name = display_name
-        self._client = client or UrllibCenterClient()
+        self._client = client or UrllibCenterClient(host_header=center_host_header)
         self._queue: asyncio.Queue[Sequence[dict[str, Any]]] = asyncio.Queue(
             maxsize=min(MAX_QUEUE_MAX_BATCHES, max(1, queue_max_batches))
         )

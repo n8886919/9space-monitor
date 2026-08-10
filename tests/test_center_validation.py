@@ -38,10 +38,12 @@ class CenterValidationTests(unittest.TestCase):
             "channels": [1, 2],
             "concurrency": 1,
             "timeout_seconds": 15,
+            "site_ip": "100.64.0.10",
         }
         batch = validate_batch(payload)
         self.assertEqual(batch.snapshot_registration.channels, (1, 2))
         self.assertEqual(batch.snapshot_registration.timeout_seconds, 15)
+        self.assertEqual(batch.snapshot_registration.site_ip, "100.64.0.10")
         payload["source"] = "integration"
         with self.assertRaisesRegex(TelemetryValidationError, "snapshot_registration"):
             validate_batch(payload)

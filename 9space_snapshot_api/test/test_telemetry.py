@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 import sys
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -16,10 +17,12 @@ ADDON_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ADDON_DIR))
 
 from telemetry import (
-    hub_telemetry_url,
+    hub_telemetry_destination,
     NvrTelemetryModel,
     TelemetryProducer,
+    UrllibCenterClient,
     safe_hub_ip,
+    resolve_magicdns_ipv4,
     safe_site_metadata,
     telemetry_channel_ids,
 )
@@ -73,12 +76,20 @@ class CancellationIgnoringClient(FakeCenterClient):
 
 
 class TelemetryProducerTests(unittest.IsolatedAsyncioTestCase):
+    def test_default_client_preserves_magicdns_host_header(self) -> None:
+        client = UrllibCenterClient(host_header="hub.example.ts.net:8765")
+        request = client.request(
+            "http://100.64.0.10:8765/api/v1/telemetry", b'{"safe":true}'
+        )
+        self.assertEqual(request.get_header("Host"), "hub.example.ts.net:8765")
+
     async def test_registration_is_attached_to_every_addon_batch(self) -> None:
         client = FakeCenterClient()
         registration = {
             "channels": [1, 2],
             "concurrency": 1,
             "timeout_seconds": 15,
+            "site_ip": "100.64.0.10",
         }
         producer = TelemetryProducer(
             center_url="https://center.invalid/api/v1/telemetry",
@@ -382,12 +393,29 @@ class NvrTelemetryModelTests(unittest.TestCase):
         self.assertIsNone(safe_site_metadata("sample-site", "2001:db8::1"))
         self.assertIsNone(safe_site_metadata("sample-site", "A" * 80))
 
-    def test_hub_ip_builds_one_fixed_destination_and_channel_ids_are_capped(self) -> None:
+    def test_hub_ip_builds_fixed_local_or_magicdns_destination(self) -> None:
         self.assertEqual(
-            hub_telemetry_url("site.example.ts.net"),
-            "http://site.example.ts.net:8765/api/v1/telemetry",
+            hub_telemetry_destination("hub.example.ts.net", "hub"),
+            (
+                "http://afa94ae2-9space-monitor-hub:8765/api/v1/telemetry",
+                "hub.example.ts.net:8765",
+                None,
+            ),
         )
-        self.assertEqual(safe_hub_ip("100.64.0.10"), "100.64.0.10")
+        addresses = {
+            "hub.example.ts.net": "100.64.0.10",
+            "site.example.ts.net": "100.64.0.11",
+        }
+        self.assertEqual(
+            hub_telemetry_destination(
+                "hub.example.ts.net", "site", resolver=addresses.get
+            ),
+            (
+                "http://100.64.0.10:8765/api/v1/telemetry",
+                "hub.example.ts.net:8765",
+                "100.64.0.11",
+            ),
+        )
         for value in (
             "",
             "site",
@@ -398,7 +426,20 @@ class NvrTelemetryModelTests(unittest.TestCase):
             "192.168.1.10",
         ):
             with self.subTest(value=value):
-                self.assertIsNone(hub_telemetry_url(value))
+                self.assertIsNone(
+                    hub_telemetry_destination(value, "site", resolver=lambda _: None)
+                )
+
+    def test_magicdns_resolution_uses_only_tailnet_answer(self) -> None:
+        result = SimpleNamespace(
+            returncode=0,
+            stdout="Server: 100.100.100.100\nAddress: 100.100.100.100\nName: hub.example.ts.net\nAddress: 100.64.0.10\n",
+        )
+        with patch("telemetry.subprocess.run", return_value=result) as run:
+            self.assertEqual(resolve_magicdns_ipv4("hub.example.ts.net"), "100.64.0.10")
+        self.assertEqual(run.call_args.args[0][-1], "100.100.100.100")
+
+    def test_channel_ids_are_capped(self) -> None:
         self.assertEqual(list(telemetry_channel_ids(0)), [])
         self.assertEqual(list(telemetry_channel_ids("not-an-int")), [])
         ids = telemetry_channel_ids(10_000)

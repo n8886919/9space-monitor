@@ -129,6 +129,7 @@ class HubAppTests(unittest.TestCase):
             "channels": [1, 2],
             "concurrency": 1,
             "timeout_seconds": 15,
+            "site_ip": None,
         }
         status, _headers, _body = asyncio.run(asgi_request(
             app, "POST", "/api/v1/telemetry", chunks=[json.dumps(payload).encode()],
@@ -153,6 +154,7 @@ class HubAppTests(unittest.TestCase):
         payload = self.payload()
         payload["snapshot_registration"] = {
             "channels": [1], "concurrency": 1, "timeout_seconds": 15,
+            "site_ip": None,
         }
         status, _headers, body = asyncio.run(asgi_request(
             app, "POST", "/api/v1/telemetry", chunks=[json.dumps(payload).encode()],
@@ -170,6 +172,7 @@ class HubAppTests(unittest.TestCase):
         payload = self.payload()
         payload["snapshot_registration"] = {
             "channels": [1], "concurrency": 1, "timeout_seconds": 15,
+            "site_ip": "100.64.0.10",
         }
         status, _headers, _body = asyncio.run(asgi_request(
             app, "POST", "/api/v1/telemetry", chunks=[json.dumps(payload).encode()],
@@ -179,7 +182,29 @@ class HubAppTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(
             app.state.scheduler.sites["safe-site"].base_url,
-            "http://safe-site.example-tail.ts.net:8222",
+            "http://100.64.0.10:8222",
+        )
+
+    def test_same_machine_registration_uses_internal_snapshot_hostname(self):
+        app = create_app(
+            sites=(), snapshots=self.store, state=CurrentState(()),
+            max_stale_seconds=120,
+        )
+        payload = self.payload()
+        payload["site_id"] = "hub"
+        payload["snapshot_registration"] = {
+            "channels": [1], "concurrency": 1, "timeout_seconds": 15,
+            "site_ip": None,
+        }
+        status, _headers, _body = asyncio.run(asgi_request(
+            app, "POST", "/api/v1/telemetry", chunks=[json.dumps(payload).encode()],
+            client_host="172.18.0.2",
+            extra_headers=((b"host", b"hub.example-tail.ts.net:8765"),),
+        ))
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            app.state.scheduler.sites["hub"].base_url,
+            "http://afa94ae2-9space-snapshot-addon:8000",
         )
 
     def test_streaming_body_bound_and_sensitive_values_fail_closed(self):

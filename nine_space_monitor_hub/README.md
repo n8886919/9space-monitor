@@ -27,17 +27,18 @@ snapshot_refresh_seconds: 30
 站點資料由各站 Snapshot add-on 隨 telemetry 自動註冊。Snapshot add-on options 中：
 
 - `site_id`、`site_display_name`、`channel_count` 提供站點與 channel mapping。
+- Dahua RTSP/HTTP ports 固定為 `554`／`80`，不再是 Supervisor options。
 - `max_concurrency` 直接作為 Hub 拉圖 concurrency。
 - Hub timeout 由 `health_timeout_ms` 換算並加 5 秒 capture margin，限制在 2–60 秒。
 - `hub_ip` 只填中央 Hub 的 Tailscale IPv4 或完整 `*.ts.net` hostname。Snapshot
   add-on 固定使用 HTTP、port `8765` 與 `/api/v1/telemetry`，不接受 scheme、port 或 path。
-- Hub 優先從實際 Tailscale TCP peer 推導 `http://<peer>:8222`，不接受 producer URL
-  或 proxy headers。Supervisor NAT 隱藏 peer 時，改從 telemetry request 的完整 Hub
-  MagicDNS `Host` 取得 tailnet suffix，以 `site_id` 組成站點 MagicDNS；因此 `site_id`
-  必須與 Tailscale machine name 相同。
+- Snapshot add-on 不依賴 container system DNS；遠端站點以 Tailscale resolver 取得
+  Hub 與自身位址，連線時保留原始 Hub MagicDNS `Host`。與 Hub 同一台 HA 時，自動改走
+  Supervisor internal hostname。Hub 優先使用實際 Tailscale peer；Supervisor NAT 隱藏
+  peer 時使用 registration 中自動解析的站點位址。使用者不填站點 IP 或 URL。
 
 舊版 Hub 已保存的 `sites` option，以及 Snapshot add-on 的舊
-`center_telemetry_url`／`hub_snapshot_*` options，在升級時只為相容而忽略。
+`center_telemetry_url`／`hub_snapshot_*`／`rtsp_port`／`nvr_http_port` options，在升級時只為相容而忽略。
 真實 hostname 只放 Supervisor options，不提交到 Git，也不出現在 discovery API。
 
 ## API

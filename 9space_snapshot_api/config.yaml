@@ -1,5 +1,5 @@
 name: 9Space Snapshot Addon
-version: "0.3.10"
+version: "0.3.11"
 slug: 9space_snapshot_addon
 description: >-
   Monorepo development instance of the 9Space local API. Adds /healthz and
@@ -20,14 +20,12 @@ ports:
 
 options:
   nvr_host: "192.168.0.100"
-  rtsp_port: 554
   username: "admin"
   password: "password"
   subtype: 0
   health_timeout_ms: 10000
   jpeg_qv: 32
   max_concurrency: 1
-  nvr_http_port: 80
   channel_count: 14
   hub_ip: ""
   site_id: "chengde"
@@ -37,14 +35,12 @@ options:
 
 schema:
   nvr_host: str
-  rtsp_port: int
   username: str
   password: password
   subtype: int
   health_timeout_ms: int
   jpeg_qv: int
   max_concurrency: int
-  nvr_http_port: int
   channel_count: int
   hub_ip: str
   site_id: str

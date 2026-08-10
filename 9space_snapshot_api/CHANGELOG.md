@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.11 - 2026-08-10
+
+- Removed `rtsp_port` and `nvr_http_port`; Dahua RTSP/HTTP are fixed at 554/80.
+- Resolved remote Hub and site MagicDNS names directly through the Tailscale
+  resolver when container DNS has no split-DNS configuration.
+- Used Supervisor internal hostnames when Snapshot and Hub share one HA host.
+- Preserved the original Hub MagicDNS Host header while connecting by address.
+
 ## 0.3.10 - 2026-08-10
 
 - Replaced three Hub-specific URL/refresh options with one `hub_ip` hostname.
