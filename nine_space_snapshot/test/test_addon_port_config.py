@@ -40,6 +40,10 @@ class AddonPortConfigTests(unittest.TestCase):
         # The old (wrong) option name must not reappear.
         self.assertNotRegex(CONFIG_YAML, r"(?m)^\s*http_port:")
 
+    def test_snapshot_subtype_defaults_to_substream(self) -> None:
+        self.assertRegex(CONFIG_YAML, r"(?m)^\s*subtype:\s*1\s*$")
+        self.assertIn('_opt(opts, "subtype", 1)', MAIN)
+
     def test_hub_destination_is_one_hostname_only_option(self) -> None:
         self.assertRegex(CONFIG_YAML, r'(?m)^\s*hub_ip:\s*""\s*$')
         self.assertRegex(CONFIG_YAML, r"(?m)^\s*hub_ip:\s*str\s*$")

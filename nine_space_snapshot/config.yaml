@@ -1,5 +1,5 @@
 name: 9Space Snapshot
-version: "0.3.12"
+version: "0.3.13"
 slug: 9space_snapshot
 description: >-
   Monorepo development instance of the 9Space local API. Adds /healthz and
@@ -22,7 +22,7 @@ options:
   nvr_host: "192.168.0.100"
   username: "admin"
   password: "password"
-  subtype: 0
+  subtype: 1
   health_timeout_ms: 10000
   jpeg_qv: 32
   max_concurrency: 1

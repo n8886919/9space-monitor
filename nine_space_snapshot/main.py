@@ -32,7 +32,7 @@ OPTIONS_PATH = "/data/options.json"
 QUEUE_TIMEOUT_MS = 300
 DEFAULT_SNAPSHOT_CONCURRENCY = 1
 MAX_SNAPSHOT_CONCURRENCY = 8
-ADDON_VERSION = "0.3.12"
+ADDON_VERSION = "0.3.13"
 
 _sem: Optional[asyncio.Semaphore] = None
 
@@ -173,7 +173,7 @@ def _build_rtsp_url(opts: dict, camera_id: str) -> str:
     port = NVR_RTSP_PORT
     user = _opt(opts, "username", "admin")
     pwd = _opt(opts, "password", "")
-    subtype = int(_opt(opts, "subtype", 0))
+    subtype = int(_opt(opts, "subtype", 1))
     return f"rtsp://{user}:{pwd}@{host}:{port}/cam/realmonitor?channel={camera_id}&subtype={subtype}"
 
 

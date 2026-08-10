@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.13 - 2026-08-10
+
+- Changed the snapshot RTSP stream default and runtime fallback from main
+  stream (`subtype=0`) to substream (`subtype=1`). Existing saved options are
+  not overwritten.
+
 ## 0.3.12 - 2026-08-10
 
 - Exposed recording gap count, total duration and largest duration from the
