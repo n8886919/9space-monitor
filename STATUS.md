@@ -6,7 +6,7 @@ Updated: 2026-08-10
 
 - Branch: `main`.
 - Functional release history 只以 fast-forward push 至 `origin/main`；未 force push、未改寫歷史。
-- Source identities: `9Space Snapshot` app `0.3.14` (`9space_snapshot`), `9Space Hub` app `0.3.3` (`9space_hub`), `9Space Hub` integration `0.1.1` (`nine_space_hub`), `9Space NVR Monitor` integration `0.2.11` (`nine_space_nvr_monitor`)。本次 Snapshot／Hub source 尚未部署；NVR integration `0.2.11` 已部署兩站。
+- Source identities: `9Space Snapshot` app `0.3.14` (`9space_snapshot`), `9Space Hub` app `0.3.4` (`9space_hub`), `9Space Hub` integration `0.1.1` (`nine_space_hub`), `9Space NVR Monitor` integration `0.2.11` (`nine_space_nvr_monitor`)。本次 Snapshot／Hub source 尚未部署；NVR integration `0.2.11` 已部署兩站。
 - 舊 Center source 已改名並重構為 `nine_space_hub/` Supervisor app，顯示名稱 `9Space Hub`／`9Space 中樞`。
 - Hub 已移除 generic telemetry ingest、NVR live／recording current state、HA/Ping producer 與重複 entities；只負責 snapshot registration、跨站拉圖、last-good JPEG 與 RAM since-restart 成功率／成功失敗 counters。
 - Hub 不再保存或要求 per-site options。Snapshot app 只新增一個 `hub_ip` hostname；HTTP scheme、Hub port/path 與站點 Snapshot port 固定。registration 不傳 URL，Hub 由 Tailscale peer 或 Hub MagicDNS suffix 加 `site_id` 自動推導站點 hostname。
@@ -21,7 +21,7 @@ Updated: 2026-08-10
 ## Deployed
 
 - 中央 Home Assistant 已 additive 安裝新 `custom_components/nine_space_hub` 與 `custom_components/nine_space_nvr_monitor` source；舊 `nine_space_monitor_hub`／`nvr_monitor` source 與 config entries 仍保留運作。`ha core check`、Core recovery PASS，新 domain restart 後去敏 error count `0`，未編輯 `.storage`。
-- daan-forest 目前 Hub `0.3.2`、Snapshot app `0.3.13`；chengde 目前 Snapshot app `0.3.13`。三者 state `started`；source 中的 `0.3.3`／`0.3.14` 尚未部署。
+- daan-forest 目前 Hub `0.3.2`、Snapshot app `0.3.13`；chengde 目前 Snapshot app `0.3.13`。三者 state `started`；source 中的 `0.3.4`／`0.3.14` 尚未部署。
 - Snapshot app 以 bounded 直接 MagicDNS lookup 解決 container split-DNS 缺失；同機 Hub 使用 Supervisor internal hostname。Hub discovery 已自動註冊 `daan-forest` 與 `chengde` 共兩站。
 - daan-forest Tailscale app 已由使用者關閉 userspace networking；daan-forest→chengde `8222/healthz` PASS，ACL allow-all 無需修改。
 - daan-forest snapshot attempts `3/3` success。chengde `13/14` success；Camera 09 為 local `rtsp_timeout`／`recording_query_failed`／`snapshot_unavailable`，其餘跨站 snapshot path 正常。
@@ -34,7 +34,7 @@ Updated: 2026-08-10
 
 ## Next
 
-1. 由 HA UI 在 chengde 新增 `9Space NVR Monitor`；daan-forest 先刪除舊 `NVR Monitor` entry，再新增新版。Hub／Snapshot `0.3.3`／`0.3.14` 發布後再部署並驗證 registration／snapshot entities。
+1. 由 HA UI 在 chengde 新增 `9Space NVR Monitor`；daan-forest 先刪除舊 `NVR Monitor` entry，再新增新版。Hub／Snapshot `0.3.4`／`0.3.14` 發布後再部署並驗證 registration／snapshot entities。
 2. 修復 chengde Camera 09 的 local NVR／RTSP 問題，並盤點目前第二路錄影查詢失敗。
 3. 驗證 Hub camera/current-state entities、Recorder history 與正式 Dashboard；不以 debug Web UI 作正式 UI 驗收。
 4. 製作非工程人員只看截圖的正式 Dashboard，以及工程用站點表格／current statistics view。

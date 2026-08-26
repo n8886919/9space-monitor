@@ -24,6 +24,7 @@ class CurrentState:
         self._sites = {site.site_id: site for site in sites}
         self._attempts: dict[tuple[str, int], dict[str, Any]] = {}
         self._counts: dict[tuple[str, int], dict[str, int]] = {}
+        self._disabled: set[tuple[str, int]] = set()
 
     def register(self, site: SnapshotSite) -> bool:
         """Replace one runtime registration; no registry is persisted."""
@@ -31,12 +32,33 @@ class CurrentState:
             if site.site_id not in self._sites and len(self._sites) >= MAX_SITES:
                 return False
             self._sites[site.site_id] = site
+            self._disabled = {
+                key for key in self._disabled
+                if key[0] != site.site_id or key[1] in site.channels
+            }
             return True
 
     def has_camera(self, site_id: str, camera_id: int) -> bool:
         with self._lock:
             site = self._sites.get(site_id)
             return site is not None and camera_id in site.channels
+
+    def is_camera_enabled(self, site_id: str, camera_id: int) -> bool:
+        """Return whether a registered channel is enabled for snapshot refresh."""
+        with self._lock:
+            return self.has_camera(site_id, camera_id) and (site_id, camera_id) not in self._disabled
+
+    def set_camera_enabled(self, site_id: str, camera_id: int, enabled: bool) -> bool:
+        """Set one registered channel's bounded, in-memory enabled state."""
+        with self._lock:
+            if not self.has_camera(site_id, camera_id):
+                return False
+            key = (site_id, camera_id)
+            if enabled:
+                self._disabled.discard(key)
+            else:
+                self._disabled.add(key)
+            return True
 
     def record_snapshot_attempt(
         self,
@@ -81,7 +103,8 @@ class CurrentState:
                     cameras.append(
                         {
                             "camera_id": camera_id,
-                            "label": f"Camera {camera_id:02d}",
+                            "label": f"CH {camera_id:02d}",
+                            "enabled": (site.site_id, camera_id) not in self._disabled,
                             "snapshot_available": age is not None and age <= max_stale_seconds,
                             "last_good_age_seconds": age,
                             "latest_attempt": self._attempts.get((site.site_id, camera_id)),

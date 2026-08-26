@@ -108,7 +108,7 @@ def create_app(
         finally:
             await scheduler.stop()
 
-    app = FastAPI(title="9Space Hub", version="0.3.3", lifespan=lifespan)
+    app = FastAPI(title="9Space Hub", version="0.3.4", lifespan=lifespan)
     app.state.run_sync = run_sync or asyncio.to_thread
     app.state.snapshots = snapshot_store
     app.state.current = current_state
@@ -194,6 +194,30 @@ def create_app(
         response = JSONResponse({"snapshot_store": usage, "sites": payload})
         response.headers["Cache-Control"] = "no-store"
         return response
+
+    @app.put("/api/v1/sites/{site_id}/cameras/{camera_id}/enabled")
+    async def set_camera_enabled(request: Request, site_id: str, camera_id: int) -> JSONResponse:
+        try:
+            validate_site_id(site_id)
+            validate_camera_id(camera_id)
+        except (RegistrationValidationError, ValueError):
+            raise HTTPException(status_code=404, detail="camera_not_found") from None
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="invalid_json") from None
+        if not isinstance(body, dict) or set(body) != {"enabled"} or type(body["enabled"]) is not bool:
+            raise HTTPException(status_code=422, detail="invalid_enabled")
+        changed = await call_sync(
+            request,
+            request.app.state.current.set_camera_enabled,
+            site_id,
+            camera_id,
+            body["enabled"],
+        )
+        if not changed:
+            raise HTTPException(status_code=404, detail="camera_not_found")
+        return JSONResponse({"enabled": body["enabled"]}, headers={"Cache-Control": "no-store"})
 
     @app.get(
         "/api/v1/sites/{site_id}/cameras/{camera_id}/snapshot",

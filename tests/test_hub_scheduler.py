@@ -86,3 +86,26 @@ class SchedulerTests(unittest.TestCase):
             self.assertEqual((camera["snapshot_success_count"], camera["snapshot_failure_count"]), (1, 1))
             self.assertEqual(camera["snapshot_consecutive_failures"], 1)
             self.assertFalse(any(path.suffix in {".db", ".sqlite", ".sqlite3"} for path in store.root.parent.rglob("*")))
+
+    def test_disabled_channel_is_skipped_and_can_be_reenabled(self):
+        with tempfile.TemporaryDirectory() as root:
+            site = SnapshotSite("safe-site", "Safe", "http://example.invalid", (1, 2), 2, 2, 5)
+            state = CurrentState((site,)); store = SnapshotStore(os.path.join(root, "snap"))
+            fetched = []
+
+            async def fetch(url, _timeout):
+                fetched.append(url)
+                return 200, "image/jpeg", b"opaque"
+
+            async def immediate(function, *args, **kwargs):
+                return function(*args, **kwargs)
+
+            self.assertTrue(state.set_camera_enabled("safe-site", 2, False))
+            scheduler = SnapshotScheduler((site,), state, store, fetcher=fetch, run_sync=immediate)
+            asyncio.run(scheduler.run_round(site))
+            self.assertEqual(fetched, ["http://example.invalid/api/v1/channels/1/snapshot"])
+            self.assertFalse(state.sites(store, max_stale_seconds=120)[0]["cameras"][1]["enabled"])
+
+            self.assertTrue(state.set_camera_enabled("safe-site", 2, True))
+            asyncio.run(scheduler.run_round(site))
+            self.assertTrue(any(url.endswith("/2/snapshot") for url in fetched))

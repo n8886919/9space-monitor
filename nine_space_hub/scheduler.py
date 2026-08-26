@@ -28,6 +28,8 @@ class SnapshotSite:
 
 
 class AttemptSink(Protocol):
+    def is_camera_enabled(self, site_id: str, camera_id: int) -> bool: ...
+
     def record_snapshot_attempt(
         self,
         site_id: str,
@@ -114,8 +116,12 @@ class SnapshotScheduler:
         self._running = False
 
     async def run_round(self, site: SnapshotSite) -> None:
-        for start in range(0, len(site.channels), site.concurrency):
-            batch = site.channels[start:start + site.concurrency]
+        enabled_channels = tuple(
+            channel for channel in site.channels
+            if self.state.is_camera_enabled(site.site_id, channel)
+        )
+        for start in range(0, len(enabled_channels), site.concurrency):
+            batch = enabled_channels[start:start + site.concurrency]
             await asyncio.gather(*(self._attempt(site, channel) for channel in batch))
 
     async def _attempt(self, site: SnapshotSite, channel: int) -> None:
