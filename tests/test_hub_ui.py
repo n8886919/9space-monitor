@@ -20,6 +20,17 @@ class HubUiTests(unittest.TestCase):
         self.assertNotIn("statistics", source)
         self.assertNotIn("Ping", source)
 
+    def test_ui_has_channel_toggle_and_freshness_borders(self):
+        source = (ROOT / "app.js").read_text()
+        styles = (ROOT / "styles.css").read_text()
+        self.assertIn('["CH",', source)
+        self.assertIn('`CH ${String(camera.camera_id).padStart(2, "0")} 啟用`', source)
+        self.assertIn('camera.enabled', source)
+        self.assertIn('/enabled`', source)
+        self.assertIn('snapshot_available ? "snapshot-fresh" : "snapshot-stale"', source)
+        self.assertIn('.snapshot-fresh', styles)
+        self.assertIn('.snapshot-stale', styles)
+
     def test_ui_is_explicitly_debug_and_recorder_owns_history(self):
         page = (ROOT / "index.html").read_text()
         self.assertIn("Debug view", page)

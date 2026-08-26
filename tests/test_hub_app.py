@@ -72,3 +72,20 @@ class HubAppTests(unittest.TestCase):
         self.assertEqual(camera["snapshot_success_rate"], 100.0)
         for forbidden in ("live_video", "recording_query_ok", "recording_recent", "recording_files_24h"):
             self.assertNotIn(forbidden, camera)
+
+    def test_channel_enabled_endpoint_updates_runtime_state(self):
+        status, _, body = self.request(
+            "PUT",
+            "/api/v1/sites/safe-site/cameras/1/enabled",
+            chunks=[b'{"enabled":false}'],
+        )
+        self.assertEqual((status, json.loads(body)), (200, {"enabled": False}))
+        _, _, body = self.request("GET", "/api/v1/dashboard/summary")
+        self.assertFalse(json.loads(body)["sites"][0]["cameras"][0]["enabled"])
+
+        status, _, body = self.request(
+            "PUT",
+            "/api/v1/sites/safe-site/cameras/1/enabled",
+            chunks=[b'{"enabled":"false"}'],
+        )
+        self.assertEqual((status, json.loads(body)), (422, {"detail": "invalid_enabled"}))

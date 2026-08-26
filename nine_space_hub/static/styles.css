@@ -4,8 +4,13 @@ button { margin: .25rem; padding: .5rem; } .active { font-weight: bold; }
 .site-summary { border: 1px solid #555; margin: 1rem 0; padding: .5rem 1rem; }
 .site-summary p { margin: .4rem 0; }
 .cards { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
-.camera { border: 3px solid #777; padding: .75rem; } .attempt-success { border-color: #2b9b52; } .attempt-failure { border-color: #c64242; }
+.camera { border: 3px solid #777; padding: .75rem; } .snapshot-fresh { border-color: #2b9b52; } .snapshot-stale { border-color: #c64242; }
 img { display: block; height: auto; max-width: 100%; } .placeholder { color: #bbb; min-height: 2rem; }
 .data-table { border-collapse: collapse; display: block; margin-bottom: 1.5rem; max-width: 100%; overflow-x: auto; white-space: nowrap; }
 .data-table td, .data-table th { border: 1px solid #555; padding: .45rem; text-align: left; vertical-align: top; }
 .data-table th { background: #292929; }
+.data-table input[role="switch"] { appearance: none; background: #666; border-radius: .75rem; cursor: pointer; height: 1.25rem; margin: 0; position: relative; vertical-align: middle; width: 2.5rem; }
+.data-table input[role="switch"]::before { background: #fff; border-radius: 50%; content: ""; height: .9rem; left: .18rem; position: absolute; top: .18rem; transition: transform .15s ease; width: .9rem; }
+.data-table input[role="switch"]:checked { background: #2b9b52; }
+.data-table input[role="switch"]:checked::before { transform: translateX(1.2rem); }
+.data-table input[role="switch"]:disabled { cursor: wait; opacity: .6; }

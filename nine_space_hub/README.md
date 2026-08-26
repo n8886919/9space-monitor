@@ -23,6 +23,10 @@ snapshot_store_limit_mb: 1024
 snapshot_refresh_seconds: 30
 ```
 
+Debug Web UI 的每個 CH 可用 toggle 暫停或恢復該 channel 的 snapshot refresh；
+此 enabled 狀態和 snapshot counters 一樣只保存在 RAM，Hub restart 後回復為全部啟用。
+有 last-good JPEG 時，圖片卡在 freshness 範圍內顯示綠框，過期則顯示紅框。
+
 站點資料由各站 Snapshot app 以 snapshot-only heartbeat 自動註冊。Snapshot app options 中：
 
 - `site_id`、`site_display_name`、`channel_count` 提供站點與 channel mapping。
