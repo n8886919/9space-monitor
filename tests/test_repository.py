@@ -23,6 +23,13 @@ class RepositoryTests(unittest.TestCase):
         self.assertTrue(manifest["config_flow"])
         self.assertEqual("local_polling", manifest["iot_class"])
 
+    def test_manifest_keys_follow_hassfest_order(self) -> None:
+        manifest = json.loads((INTEGRATION / "manifest.json").read_text())
+        keys = list(manifest)
+
+        self.assertEqual(keys[:2], ["domain", "name"])
+        self.assertEqual(keys[2:], sorted(keys[2:]))
+
     def test_translation_titles_match_strings(self) -> None:
         strings = json.loads((INTEGRATION / "strings.json").read_text())
         english = json.loads(

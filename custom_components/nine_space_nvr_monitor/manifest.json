@@ -1,11 +1,11 @@
 {
   "domain": "nine_space_nvr_monitor",
   "name": "9Space NVR Monitor",
-  "codeowners": [
-    "@n8886919"
-  ],
   "after_dependencies": [
     "recorder"
+  ],
+  "codeowners": [
+    "@n8886919"
   ],
   "config_flow": true,
   "documentation": "https://github.com/n8886919/9space-monitor",
