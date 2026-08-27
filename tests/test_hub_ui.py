@@ -31,6 +31,23 @@ class HubUiTests(unittest.TestCase):
         self.assertIn('.snapshot-fresh', styles)
         self.assertIn('.snapshot-stale', styles)
 
+    def test_disabled_channels_hide_metrics_and_last_good_cards(self):
+        source = (ROOT / "app.js").read_text()
+        styles = (ROOT / "styles.css").read_text()
+        self.assertIn('const metrics = camera.enabled', source)
+        self.assertIn('["—", "—", "—", "—", "—", "—"]', source)
+        self.assertIn('site.cameras.filter(camera => camera.enabled)', source)
+        self.assertIn('className: camera.enabled ? "" : "channel-disabled"', source)
+        self.assertIn('.channel-disabled', styles)
+
+    def test_ui_uses_icons_and_versioned_static_assets(self):
+        source = (ROOT / "app.js").read_text()
+        page = (ROOT / "index.html").read_text()
+        self.assertIn('value === true ? "✓" : value === false ? "✕" : "—"', source)
+        self.assertNotIn('value === true ? "是"', source)
+        self.assertIn('static/styles.css?v=__APP_VERSION__', page)
+        self.assertIn('static/app.js?v=__APP_VERSION__', page)
+
     def test_ui_is_explicitly_debug_and_recorder_owns_history(self):
         page = (ROOT / "index.html").read_text()
         self.assertIn("Debug view", page)

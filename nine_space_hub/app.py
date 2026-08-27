@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .scheduler import SnapshotScheduler, SnapshotSite, load_options
@@ -26,9 +26,24 @@ SNAPSHOT_ROOT = (
     else "/tmp/9space-hub-snapshots"
 )
 STATIC_ROOT = Path(__file__).with_name("static")
+CONFIG_PATH = Path(__file__).with_name("config.yaml")
 TAILSCALE_V4 = ipaddress.ip_network("100.64.0.0/10")
 TAILSCALE_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 LOCAL_SNAPSHOT_HOSTNAME = "afa94ae2-9space-snapshot"
+
+
+def _app_version() -> str:
+    """Read the Supervisor app version without adding a YAML runtime dependency."""
+    for line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition(":")
+        if key == "version" and separator:
+            version = value.strip().strip('"')
+            if version:
+                return version
+    raise RuntimeError("missing_app_version")
+
+
+APP_VERSION = _app_version()
 
 
 def _snapshot_base_from_request(
@@ -108,7 +123,10 @@ def create_app(
         finally:
             await scheduler.stop()
 
-    app = FastAPI(title="9Space Hub", version="0.3.4", lifespan=lifespan)
+    dashboard_html = (STATIC_ROOT / "index.html").read_text(encoding="utf-8").replace(
+        "__APP_VERSION__", APP_VERSION
+    )
+    app = FastAPI(title="9Space Hub", version=APP_VERSION, lifespan=lifespan)
     app.state.run_sync = run_sync or asyncio.to_thread
     app.state.snapshots = snapshot_store
     app.state.current = current_state
@@ -123,10 +141,9 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/", include_in_schema=False)
-    async def dashboard_index() -> FileResponse:
-        return FileResponse(
-            STATIC_ROOT / "index.html",
-            media_type="text/html",
+    async def dashboard_index() -> HTMLResponse:
+        return HTMLResponse(
+            dashboard_html,
             headers={
                 "Cache-Control": "no-store",
                 "Content-Security-Policy": "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'self'",

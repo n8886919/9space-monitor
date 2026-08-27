@@ -60,6 +60,15 @@ class HubAppTests(unittest.TestCase):
         for forbidden in ("events", "latest", "export.json", "ping-summary"):
             self.assertNotIn(forbidden, " ".join(routes))
 
+    def test_dashboard_disables_html_cache_and_versions_static_assets(self):
+        status, headers, body = self.request("GET", "/")
+        page = body.decode()
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["cache-control"], "no-store")
+        self.assertIn("static/styles.css?v=0.3.5", page)
+        self.assertIn("static/app.js?v=0.3.5", page)
+        self.assertNotIn("__APP_VERSION__", page)
+
     def test_snapshot_contract_and_statistics(self):
         status, _, body = self.request("GET", "/api/v1/sites/safe-site/cameras/1/snapshot")
         self.assertEqual((status, json.loads(body)), (503, {"error_code": "snapshot_unavailable"}))
