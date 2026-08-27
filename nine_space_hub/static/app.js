@@ -126,7 +126,16 @@ function render(summary) {
   selectedSiteId = selected.site_id;
   summary.sites.forEach(site => {
     const button = el("button", site.display_name); button.type = "button";
+    const healthClass = site.site_reachable === true
+      ? "site-online"
+      : site.site_reachable === false ? "site-offline" : "site-unknown";
+    button.classList.add(healthClass);
     button.classList.toggle("active", site.site_id === selectedSiteId);
+    const healthLabel = site.site_reachable === true
+      ? "站點可連線"
+      : site.site_reachable === false ? "站點無回應" : "站點狀態確認中";
+    button.title = healthLabel;
+    button.setAttribute("aria-label", `${site.display_name}：${healthLabel}`);
     button.addEventListener("click", () => { selectedSiteId = site.site_id; render(summary); });
     tabs.append(button);
   });

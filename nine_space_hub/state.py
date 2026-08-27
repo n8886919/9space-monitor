@@ -1,7 +1,7 @@
 """Bounded in-memory current state for 9Space Hub.
 
-Home Assistant Recorder, not this app, owns status history. The only
-persistent Hub payload is one atomically replaced last-good JPEG per camera.
+Home Assistant Recorder, not this app, owns status history. Runtime health and
+attempt counters stay in RAM; validated site registration is persisted separately.
 """
 
 from __future__ import annotations
@@ -25,9 +25,10 @@ class CurrentState:
         self._attempts: dict[tuple[str, int], dict[str, Any]] = {}
         self._counts: dict[tuple[str, int], dict[str, int]] = {}
         self._disabled: set[tuple[str, int]] = set()
+        self._site_health: dict[str, dict[str, Any]] = {}
 
     def register(self, site: SnapshotSite) -> bool:
-        """Replace one runtime registration; no registry is persisted."""
+        """Replace one runtime registration after its persistent write succeeds."""
         with self._lock:
             if site.site_id not in self._sites and len(self._sites) >= MAX_SITES:
                 return False
@@ -37,6 +38,19 @@ class CurrentState:
                 if key[0] != site.site_id or key[1] in site.channels
             }
             return True
+
+    def record_site_health(self, site_id: str, *, reachable: bool, timestamp_ms: int) -> None:
+        with self._lock:
+            if site_id not in self._sites:
+                raise KeyError("unknown_site")
+            previous = self._site_health.get(site_id, {})
+            failures = 0 if reachable else int(previous.get("consecutive_failures", 0)) + 1
+            effective = True if reachable else (False if failures >= 3 else previous.get("reachable"))
+            self._site_health[site_id] = {
+                "reachable": effective,
+                "last_seen_at": timestamp_ms if reachable else previous.get("last_seen_at"),
+                "consecutive_failures": failures,
+            }
 
     def has_camera(self, site_id: str, camera_id: int) -> bool:
         with self._lock:
@@ -90,6 +104,7 @@ class CurrentState:
         result: list[dict[str, Any]] = []
         with self._lock:
             for site in self._sites.values():
+                health = self._site_health.get(site.site_id, {})
                 cameras = []
                 for camera_id in site.channels:
                     counts = self._counts.get(
@@ -122,6 +137,8 @@ class CurrentState:
                     {
                         "site_id": site.site_id,
                         "display_name": site.display_name,
+                        "site_reachable": health.get("reachable"),
+                        "site_last_seen_at": health.get("last_seen_at"),
                         "updated_at": updated_at,
                         "cameras": cameras,
                     }

@@ -41,6 +41,8 @@ class AttemptSink(Protocol):
         error_code: str | None,
     ) -> None: ...
 
+    def record_site_health(self, site_id: str, *, reachable: bool, timestamp_ms: int) -> None: ...
+
 
 def load_options(path: str | Path = "/data/options.json") -> tuple[int, int, int]:
     """Load validated Supervisor options without logging private site URLs."""
@@ -95,6 +97,73 @@ async def default_fetch(url: str, timeout_seconds: int) -> tuple[int, str, bytes
         except urllib.error.HTTPError as error:
             return error.code, "", b""
     return await asyncio.to_thread(fetch)
+
+
+async def default_health_probe(base_url: str, timeout_seconds: int) -> bool:
+    def probe() -> bool:
+        url = f"{base_url}/healthz"
+        opener = urllib.request.build_opener(_NoRedirect())
+        with opener.open(url, timeout=timeout_seconds) as response:
+            return response.geturl() == url and response.status == 200
+    return await asyncio.to_thread(probe)
+
+
+class SiteHealthMonitor:
+    """Bounded site-level probe loop independent from camera snapshot results."""
+
+    def __init__(
+        self,
+        sites: tuple[SnapshotSite, ...],
+        state: AttemptSink,
+        *,
+        probe: Callable[[str, int], Awaitable[bool]] = default_health_probe,
+        interval_seconds: int = 60,
+        timeout_seconds: int = 2,
+        concurrency: int = 4,
+    ) -> None:
+        self.sites = {site.site_id: site for site in sites}
+        self.state = state
+        self.probe = probe
+        self.interval_seconds = interval_seconds
+        self.timeout_seconds = timeout_seconds
+        self.concurrency = concurrency
+        self._task: asyncio.Task[None] | None = None
+
+    async def _attempt(self, site: SnapshotSite) -> None:
+        try:
+            reachable = bool(await asyncio.wait_for(
+                self.probe(site.base_url, self.timeout_seconds), timeout=self.timeout_seconds
+            ))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            reachable = False
+        self.state.record_site_health(
+            site.site_id, reachable=reachable, timestamp_ms=int(time.time() * 1000)
+        )
+
+    async def run_round(self) -> None:
+        sites = tuple(self.sites.values())
+        for start in range(0, len(sites), self.concurrency):
+            await asyncio.gather(*(self._attempt(site) for site in sites[start:start + self.concurrency]))
+
+    async def _loop(self) -> None:
+        while True:
+            await self.run_round()
+            await asyncio.sleep(self.interval_seconds)
+
+    async def start(self) -> None:
+        if self._task is None:
+            self._task = asyncio.create_task(self._loop())
+
+    async def upsert(self, site: SnapshotSite) -> None:
+        self.sites[site.site_id] = site
+
+    async def stop(self) -> None:
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 class SnapshotScheduler:

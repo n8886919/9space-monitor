@@ -71,6 +71,7 @@ class HubCamera:
     site_name: str
     camera_id: int
     label: str
+    enabled: bool
     snapshot_available: bool
     last_good_age_seconds: int | None
     snapshot_success: bool | None
@@ -87,6 +88,8 @@ class HubCamera:
 class HubSite:
     site_id: str
     display_name: str
+    site_reachable: bool | None
+    site_last_seen_at: int | None
     updated_at: int | None
     cameras: tuple[HubCamera, ...]
 
@@ -114,7 +117,7 @@ def parse_sites(payload: Any) -> dict[str, HubSite]:
             if not isinstance(raw, dict):
                 raise HubInvalidResponse("invalid_camera")
             if set(raw) != {
-                "camera_id", "label", "snapshot_available", "last_good_age_seconds",
+                "camera_id", "label", "enabled", "snapshot_available", "last_good_age_seconds",
                 "latest_attempt", "snapshot_success_count", "snapshot_failure_count",
                 "snapshot_consecutive_failures", "snapshot_success_rate",
             }:
@@ -134,13 +137,15 @@ def parse_sites(payload: Any) -> dict[str, HubSite]:
             if error is not None and not isinstance(error, str):
                 raise HubInvalidResponse("invalid_error_code")
             snapshot_available = raw.get("snapshot_available")
-            if type(snapshot_available) is not bool:
+            enabled = raw.get("enabled")
+            if type(enabled) is not bool or type(snapshot_available) is not bool:
                 raise HubInvalidResponse("invalid_camera")
             cameras.append(HubCamera(
                 site_id=site_id,
                 site_name=display_name,
                 camera_id=camera_id,
                 label=label,
+                enabled=enabled,
                 snapshot_available=snapshot_available,
                 last_good_age_seconds=_optional_int(raw.get("last_good_age_seconds"), 0, 10**9),
                 snapshot_success=_optional_bool(attempt.get("success")),
@@ -152,7 +157,14 @@ def parse_sites(payload: Any) -> dict[str, HubSite]:
                 snapshot_consecutive_failures=_optional_int(raw.get("snapshot_consecutive_failures"), 0, 10**12) or 0,
                 snapshot_success_rate=_optional_number(raw.get("snapshot_success_rate"), 0, 100),
             ))
-        result[site_id] = HubSite(site_id, display_name, _timestamp(raw_site.get("updated_at")), tuple(cameras))
+        result[site_id] = HubSite(
+            site_id,
+            display_name,
+            _optional_bool(raw_site.get("site_reachable")),
+            _timestamp(raw_site.get("site_last_seen_at")),
+            _timestamp(raw_site.get("updated_at")),
+            tuple(cameras),
+        )
     return result
 
 

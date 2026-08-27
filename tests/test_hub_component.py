@@ -19,8 +19,9 @@ API = importlib.util.module_from_spec(SPEC); sys.modules[SPEC.name] = API; SPEC.
 
 
 def payload():
-    return {"sites": [{"site_id": "safe-site", "display_name": "Safe", "updated_at": 1,
-        "cameras": [{"camera_id": 1, "label": "Camera 01", "snapshot_available": True,
+    return {"sites": [{"site_id": "safe-site", "display_name": "Safe",
+        "site_reachable": True, "site_last_seen_at": 1, "updated_at": 1,
+        "cameras": [{"camera_id": 1, "label": "Camera 01", "enabled": True, "snapshot_available": True,
             "last_good_age_seconds": 5, "latest_attempt": {"success": True, "timestamp": 1,
             "latency_ms": 12.5, "error_code": None}, "snapshot_success_count": 9,
             "snapshot_failure_count": 1, "snapshot_consecutive_failures": 0,
@@ -29,7 +30,11 @@ def payload():
 
 class HubComponentTests(unittest.TestCase):
     def test_parser_maps_snapshot_only_state(self):
-        camera = API.parse_sites(payload())["safe-site"].cameras[0]
+        site = API.parse_sites(payload())["safe-site"]
+        camera = site.cameras[0]
+        self.assertIs(site.site_reachable, True)
+        self.assertEqual(site.site_last_seen_at, 1)
+        self.assertIs(camera.enabled, True)
         self.assertEqual(camera.snapshot_success_rate, 90.0)
         self.assertEqual(camera.snapshot_latency_ms, 12.5)
         for field in ("live_video", "recording_query_ok", "recording_recent"):

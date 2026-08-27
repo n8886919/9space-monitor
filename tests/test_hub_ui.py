@@ -48,6 +48,16 @@ class HubUiTests(unittest.TestCase):
         self.assertIn('static/styles.css?v=__APP_VERSION__', page)
         self.assertIn('static/app.js?v=__APP_VERSION__', page)
 
+    def test_site_tabs_use_health_borders(self):
+        source = (ROOT / "app.js").read_text()
+        styles = (ROOT / "styles.css").read_text()
+        self.assertIn('site.site_reachable === true', source)
+        self.assertIn('"site-online"', source)
+        self.assertIn('"site-offline"', source)
+        self.assertIn('"site-unknown"', source)
+        self.assertIn('button.site-online', styles)
+        self.assertIn('button.site-offline', styles)
+
     def test_ui_is_explicitly_debug_and_recorder_owns_history(self):
         page = (ROOT / "index.html").read_text()
         self.assertIn("Debug view", page)

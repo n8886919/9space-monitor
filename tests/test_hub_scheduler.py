@@ -8,7 +8,7 @@ import os
 import tempfile
 import unittest
 
-from nine_space_hub.scheduler import SnapshotScheduler, SnapshotSite, load_options
+from nine_space_hub.scheduler import SiteHealthMonitor, SnapshotScheduler, SnapshotSite, load_options
 from nine_space_hub.snapshots import SnapshotStore
 from nine_space_hub.state import CurrentState
 
@@ -109,3 +109,22 @@ class SchedulerTests(unittest.TestCase):
             self.assertTrue(state.set_camera_enabled("safe-site", 2, True))
             asyncio.run(scheduler.run_round(site))
             self.assertTrue(any(url.endswith("/2/snapshot") for url in fetched))
+
+    def test_site_health_requires_three_failures_and_recovers_once(self):
+        with tempfile.TemporaryDirectory() as root:
+            site = SnapshotSite("safe-site", "Safe", "http://example.invalid", (1,), 1, 2, 5)
+            state = CurrentState((site,)); store = SnapshotStore(os.path.join(root, "snap"))
+            results = [False, False, False, True]
+            calls = []
+
+            async def probe(base_url, timeout):
+                calls.append((base_url, timeout))
+                return results.pop(0)
+
+            monitor = SiteHealthMonitor((site,), state, probe=probe)
+            for expected in (None, None, False, True):
+                asyncio.run(monitor.run_round())
+                summary = state.sites(store, max_stale_seconds=120)[0]
+                self.assertIs(summary["site_reachable"], expected)
+            self.assertTrue(state.sites(store, max_stale_seconds=120)[0]["site_last_seen_at"])
+            self.assertEqual(calls, [("http://example.invalid", 2)] * 4)

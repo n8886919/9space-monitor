@@ -14,7 +14,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .scheduler import SnapshotScheduler, SnapshotSite, load_options
+from .scheduler import (
+    SiteHealthMonitor,
+    SnapshotScheduler,
+    SnapshotSite,
+    default_health_probe,
+    load_options,
+)
+from .site_registry import SiteRegistry
 from .snapshots import SnapshotStore, validate_camera_id
 from .state import CurrentState
 from .validation import MAX_BODY_BYTES, RegistrationValidationError, validate_registration, validate_site_id
@@ -27,6 +34,11 @@ SNAPSHOT_ROOT = (
 )
 STATIC_ROOT = Path(__file__).with_name("static")
 CONFIG_PATH = Path(__file__).with_name("config.yaml")
+SITE_REGISTRY_PATH = (
+    "/data/registered_sites.json"
+    if Path(OPTIONS_PATH).exists()
+    else "/tmp/9space-hub-registered-sites.json"
+)
 TAILSCALE_V4 = ipaddress.ip_network("100.64.0.0/10")
 TAILSCALE_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 LOCAL_SNAPSHOT_HOSTNAME = "afa94ae2-9space-snapshot"
@@ -95,15 +107,27 @@ def create_app(
     snapshot_refresh_seconds: int | None = None,
     snapshots: SnapshotStore | None = None,
     state: CurrentState | None = None,
+    site_registry: SiteRegistry | None = None,
+    health_probe: Callable[[str, int], Awaitable[bool]] | None = None,
+    health_interval_seconds: int = 60,
     run_sync: Callable[..., Awaitable[Any]] | None = None,
 ) -> FastAPI:
     configured_stale, store_limit, configured_refresh = (
         load_options(OPTIONS_PATH) if sites is None else (120, 1024 * 1024 * 1024, 30)
     )
-    active_sites = () if sites is None else sites
     stale_seconds = configured_stale if max_stale_seconds is None else max_stale_seconds
     refresh_seconds = (
         configured_refresh if snapshot_refresh_seconds is None else snapshot_refresh_seconds
+    )
+    registry = (
+        site_registry
+        if site_registry is not None
+        else (SiteRegistry(SITE_REGISTRY_PATH) if sites is None else None)
+    )
+    active_sites = (
+        registry.load(refresh_seconds=refresh_seconds)
+        if sites is None and registry is not None
+        else (() if sites is None else sites)
     )
     snapshot_store = snapshots or SnapshotStore(SNAPSHOT_ROOT, store_limit_bytes=store_limit)
     current_state = state or CurrentState(active_sites)
@@ -114,14 +138,21 @@ def create_app(
         snapshot_store,
         run_sync=run_sync or asyncio.to_thread,
     )
+    health_monitor = SiteHealthMonitor(
+        active_sites,
+        current_state,
+        probe=health_probe or default_health_probe,
+        interval_seconds=health_interval_seconds,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await scheduler.start()
+        await health_monitor.start()
         try:
             yield
         finally:
-            await scheduler.stop()
+            await asyncio.gather(health_monitor.stop(), scheduler.stop())
 
     dashboard_html = (STATIC_ROOT / "index.html").read_text(encoding="utf-8").replace(
         "__APP_VERSION__", APP_VERSION
@@ -131,6 +162,8 @@ def create_app(
     app.state.snapshots = snapshot_store
     app.state.current = current_state
     app.state.scheduler = scheduler
+    app.state.health_monitor = health_monitor
+    app.state.site_registry = registry
     app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
 
     async def call_sync(request: Request, function: Callable[..., Any], *args, **kwargs):
@@ -182,9 +215,14 @@ def create_app(
             registration.timeout_seconds,
             refresh_seconds,
         )
+        if request.app.state.site_registry is not None:
+            persisted = await call_sync(request, request.app.state.site_registry.upsert, site)
+            if not persisted:
+                raise HTTPException(status_code=422, detail="site_limit_reached")
         if not request.app.state.current.register(site):
             raise HTTPException(status_code=422, detail="site_limit_reached")
         await request.app.state.scheduler.upsert(site)
+        await request.app.state.health_monitor.upsert(site)
         return JSONResponse({"registered": True})
 
     @app.get("/api/v1/sites")

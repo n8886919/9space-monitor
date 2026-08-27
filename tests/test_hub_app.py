@@ -9,6 +9,7 @@ import unittest
 
 from nine_space_hub.app import create_app
 from nine_space_hub.scheduler import SnapshotSite
+from nine_space_hub.site_registry import SiteRegistry
 from nine_space_hub.snapshots import SnapshotStore
 from nine_space_hub.state import CurrentState
 
@@ -65,8 +66,8 @@ class HubAppTests(unittest.TestCase):
         page = body.decode()
         self.assertEqual(status, 200)
         self.assertEqual(headers["cache-control"], "no-store")
-        self.assertIn("static/styles.css?v=0.3.5", page)
-        self.assertIn("static/app.js?v=0.3.5", page)
+        self.assertIn("static/styles.css?v=0.3.6", page)
+        self.assertIn("static/app.js?v=0.3.6", page)
         self.assertNotIn("__APP_VERSION__", page)
 
     def test_snapshot_contract_and_statistics(self):
@@ -98,3 +99,55 @@ class HubAppTests(unittest.TestCase):
             chunks=[b'{"enabled":"false"}'],
         )
         self.assertEqual((status, json.loads(body)), (422, {"detail": "invalid_enabled"}))
+
+    def test_registration_is_persisted_and_exposed_with_unknown_health(self):
+        registry = SiteRegistry(os.path.join(self.tempdir.name, "registered-sites.json"))
+        state = CurrentState(())
+        async def immediate(function, *args, **kwargs): return function(*args, **kwargs)
+        app = create_app(
+            sites=(), snapshots=self.store, state=state, site_registry=registry, run_sync=immediate
+        )
+        payload = json.dumps({
+            "site_id": "remote-site", "display_name": "Remote", "channels": [1, 2],
+            "concurrency": 2, "timeout_seconds": 2, "site_ip": None,
+        }).encode()
+        status, _, body = asyncio.run(asgi_request(
+            app, "POST", "/api/v1/snapshot-sites/register", chunks=[payload],
+            client_host="100.64.0.10",
+        ))
+        self.assertEqual((status, json.loads(body)), (200, {"registered": True}))
+        restored = SiteRegistry(registry.path).load(refresh_seconds=30)
+        self.assertEqual([(site.site_id, site.channels) for site in restored], [("remote-site", (1, 2))])
+        _, _, body = asyncio.run(asgi_request(app, "GET", "/api/v1/sites"))
+        site = json.loads(body)["sites"][0]
+        self.assertIsNone(site["site_reachable"])
+        self.assertIsNone(site["site_last_seen_at"])
+
+    def test_restart_loads_registry_and_starts_health_monitor(self):
+        registry = SiteRegistry(os.path.join(self.tempdir.name, "restart-sites.json"))
+        registered = SnapshotSite(
+            "restored-site", "Restored", "http://100.64.0.10:8222", (1,), 1, 2, 30
+        )
+        self.assertTrue(registry.upsert(registered))
+
+        async def immediate(function, *args, **kwargs): return function(*args, **kwargs)
+        async def health_probe(_base_url, _timeout): return True
+        app = create_app(
+            sites=None, snapshots=self.store, site_registry=registry,
+            health_probe=health_probe, health_interval_seconds=3600, run_sync=immediate,
+        )
+        async def snapshot_fetch(_url, _timeout): return 200, "image/jpeg", b"opaque"
+        app.state.scheduler.fetcher = snapshot_fetch
+
+        async def run():
+            async with app.router.lifespan_context(app):
+                for _ in range(10):
+                    summary = app.state.current.sites(self.store, max_stale_seconds=120)[0]
+                    if summary["site_reachable"] is True:
+                        return summary
+                    await asyncio.sleep(0)
+                return summary
+
+        summary = asyncio.run(run())
+        self.assertEqual(summary["site_id"], "restored-site")
+        self.assertIs(summary["site_reachable"], True)
