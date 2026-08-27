@@ -6,11 +6,13 @@ from dataclasses import dataclass
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import CONF_HUB_BASE_URL, PLATFORMS
 from .coordinator import HubCoordinator
 from .hub_api import HubApiClient
+from .migration import retired_hub_entity_ids
 
 
 @dataclass(slots=True)
@@ -20,6 +22,21 @@ class HubRuntimeData:
 
 
 HubConfigEntry = ConfigEntry[HubRuntimeData]
+
+
+async def async_migrate_entry(
+    hass: HomeAssistant, entry: HubConfigEntry
+) -> bool:
+    """Remove entities retired when Hub became snapshot-only."""
+    if entry.version < 2:
+        entity_registry = er.async_get(hass)
+        retired_entity_ids = retired_hub_entity_ids(
+            er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+        )
+        for entity_id in retired_entity_ids:
+            entity_registry.async_remove(entity_id)
+        hass.config_entries.async_update_entry(entry, version=2)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: HubConfigEntry) -> bool:

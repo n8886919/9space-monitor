@@ -12,8 +12,8 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
 from . import HubConfigEntry
-from .entity import HubCameraEntity, cameras
-from .hub_api import HubCamera
+from .entity import HubCameraEntity, HubSiteEntity, cameras, sites
+from .hub_api import HubCamera, HubSite
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -45,10 +45,13 @@ DESCRIPTIONS = (
         native_unit_of_measurement=UnitOfTime.SECONDS, state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda camera: camera.last_good_age_seconds,
     ),
-    HubSensorDescription(
-        key="last_snapshot_attempt", translation_key="last_snapshot_attempt",
-        device_class=SensorDeviceClass.TIMESTAMP, value_fn=lambda camera: _epoch_ms(camera.snapshot_timestamp_ms),
-    ),
+)
+
+
+SITE_LAST_SEEN_DESCRIPTION = SensorEntityDescription(
+    key="site_last_seen",
+    translation_key="site_last_seen",
+    device_class=SensorDeviceClass.TIMESTAMP,
 )
 
 
@@ -57,6 +60,9 @@ async def async_setup_entry(hass, entry: HubConfigEntry, async_add_entities: Add
         HubSensor(entry, camera, description)
         for camera in cameras(entry.runtime_data.coordinator)
         for description in DESCRIPTIONS
+    ] + [
+        HubSiteLastSeenSensor(entry, site)
+        for site in sites(entry.runtime_data.coordinator)
     ])
 
 
@@ -83,3 +89,19 @@ class HubSensor(HubCameraEntity, SensorEntity):
         if camera is not None:
             attributes["snapshot_error"] = camera.snapshot_error or ""
         return attributes
+
+
+class HubSiteLastSeenSensor(HubSiteEntity, SensorEntity):
+    entity_description = SITE_LAST_SEEN_DESCRIPTION
+
+    def __init__(self, entry: HubConfigEntry, site: HubSite) -> None:
+        super().__init__(entry, site, SITE_LAST_SEEN_DESCRIPTION.key)
+
+    @property
+    def native_value(self) -> datetime | None:
+        site = self.site
+        return None if site is None else _epoch_ms(site.site_last_seen_at)
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.native_value is not None

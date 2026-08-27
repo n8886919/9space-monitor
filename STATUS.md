@@ -1,27 +1,27 @@
 # Status
 
-Updated: 2026-08-10
+Updated: 2026-08-27
 
 ## Current
 
 - Branch: `main`.
 - Functional release history 只以 fast-forward push 至 `origin/main`；未 force push、未改寫歷史。
-- Source identities: `9Space Snapshot` app `0.3.14` (`9space_snapshot`), `9Space Hub` app `0.3.4` (`9space_hub`), `9Space Hub` integration `0.1.1` (`nine_space_hub`), `9Space NVR Monitor` integration `0.2.11` (`nine_space_nvr_monitor`)。本次 Snapshot／Hub source 尚未部署；NVR integration `0.2.11` 已部署兩站。
+- Source identities: `9Space Snapshot` app `0.3.14` (`9space_snapshot`), `9Space Hub` app `0.3.6` (`9space_hub`), `9Space Hub` integration `0.1.3` (`nine_space_hub`), `9Space NVR Monitor` integration `0.2.11` (`nine_space_nvr_monitor`)。Hub integration `0.1.3` 已部署中央 HA；NVR integration `0.2.11` 已部署兩站。
 - 舊 Center source 已改名並重構為 `nine_space_hub/` Supervisor app，顯示名稱 `9Space Hub`／`9Space 中樞`。
 - Hub 已移除 generic telemetry ingest、NVR live／recording current state、HA/Ping producer 與重複 entities；只負責 snapshot registration、跨站拉圖、last-good JPEG 與 RAM since-restart 成功率／成功失敗 counters。
 - Hub 不再保存或要求 per-site options。Snapshot app 只新增一個 `hub_ip` hostname；HTTP scheme、Hub port/path 與站點 Snapshot port 固定。registration 不傳 URL，Hub 由 Tailscale peer 或 Hub MagicDNS suffix 加 `site_id` 自動推導站點 hostname。
 - Snapshot app 的 Dahua RTSP／HTTP ports 固定為 `554`／`80`；`rtsp_port` 與 `nvr_http_port` 已從 config schema/runtime reads 移除。Supervisor 保留的舊 option keys 只為升級相容而忽略。
 - `nine_space_nvr_monitor` runtime 固定使用 Supervisor internal Snapshot URL；新增／Reconfigure UI 不再要求 app base URL。舊 entry key 會被忽略，不改 entry、subentry 或 entity identity。
-- 新 `nine_space_hub` component `0.1.1` 只提供 snapshot camera、最近嘗試、圖片年齡／延遲與 since-restart 成功率／counters；Home Assistant Recorder 是狀態歷史唯一持有者。
+- 新 `nine_space_hub` component `0.1.3` 只提供 snapshot camera、截圖成功、圖片年齡／延遲、since-restart 成功率／counters，以及每站可連線／上次可連線 entities；已移除上次截圖嘗試。Home Assistant Recorder 是狀態歷史唯一持有者。
 - Local `nine_space_nvr_monitor` 仍保留最完整站點資訊與 local Ping；不取 Hub snapshot、不建立 Snapshot camera。
 - `nine_space_nvr_monitor` 已移除沒有 Dahua event producer 的 motion/video-loss/video-blind entities；保留 `camera_problem` 與 `diagnostic_status`。Snapshot API 新增錄影缺口數／總時長／最大缺口與 RTSP first-packet／probe timing，integration 沿用既有 debug unique IDs。
 - `nine_space_nvr_monitor` 所有現行 entities 預設啟用；config-entry v2 migration 只把舊版由 integration 預設停用的 registry entries 一次性啟用，不覆蓋日後的使用者手動停用。
-- 本次 root tests `73/73`、Snapshot focused tests `17/17` PASS；compileall、JSON 與 `git diff --check` PASS。Snapshot FastAPI lifecycle 全套有三個既知 TestClient/AnyIO shutdown `TIMEOUT`，未宣告整套 PASS。NVR integration 兩站實機部署／Core recovery PASS；Snapshot／Hub 本次未部署。
+- 本次 root tests `89/89` PASS；Hub targeted tests `17/17`、compileall、JSON 與 `git diff --check` PASS。中央 HA Hub integration `0.1.3` source swap、`ha core check`、Core recovery、registry migration 與 restart 後 log check PASS；authenticated live-state API 因 HTTP 401 未驗證，待 UI 確認。
 
 ## Deployed
 
-- 中央 Home Assistant 已 additive 安裝新 `custom_components/nine_space_hub` 與 `custom_components/nine_space_nvr_monitor` source；舊 `nine_space_monitor_hub`／`nvr_monitor` source 與 config entries 仍保留運作。`ha core check`、Core recovery PASS，新 domain restart 後去敏 error count `0`，未編輯 `.storage`。
-- daan-forest 目前 Hub `0.3.2`、Snapshot app `0.3.13`；chengde 目前 Snapshot app `0.3.13`。三者 state `started`；source 中的 `0.3.4`／`0.3.14` 尚未部署。
+- 中央 Home Assistant 已部署 `custom_components/nine_space_hub` `0.1.3`；Hub app `0.3.6` 正常。升級 migration 由 config entry v1 升至 v2，精準移除 `119` 個舊 Hub NVR／錄影／last-attempt registry entries，建立 8 站／89 鏡頭共 `728` 個 snapshot-only／site entities，無 `_2` replacement。未直接編輯 `.storage`，部署前已保存 scoped source、entity-registry 與 config-entry rollback。
+- daan-forest 目前 Snapshot app `0.3.13`；chengde 目前 Snapshot app `0.3.13`。兩者 state `started`；source 中的 Snapshot `0.3.14` 尚未部署。
 - Snapshot app 以 bounded 直接 MagicDNS lookup 解決 container split-DNS 缺失；同機 Hub 使用 Supervisor internal hostname。Hub discovery 已自動註冊 `daan-forest` 與 `chengde` 共兩站。
 - daan-forest Tailscale app 已由使用者關閉 userspace networking；daan-forest→chengde `8222/healthz` PASS，ACL allow-all 無需修改。
 - daan-forest snapshot attempts `3/3` success。chengde `13/14` success；Camera 09 為 local `rtsp_timeout`／`recording_query_failed`／`snapshot_unavailable`，其餘跨站 snapshot path 正常。

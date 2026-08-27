@@ -8,7 +8,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import HubConfigEntry
 from .const import DOMAIN
 from .coordinator import HubCoordinator
-from .hub_api import HubCamera
+from .hub_api import HubCamera, HubSite
 
 
 def camera_key(site_id: str, camera_id: int) -> str:
@@ -17,6 +17,10 @@ def camera_key(site_id: str, camera_id: int) -> str:
 
 def cameras(coordinator: HubCoordinator) -> list[HubCamera]:
     return [camera for site in (coordinator.data or {}).values() for camera in site.cameras]
+
+
+def sites(coordinator: HubCoordinator) -> list[HubSite]:
+    return list((coordinator.data or {}).values())
 
 
 def find_camera(coordinator: HubCoordinator, site_id: str, camera_id: int) -> HubCamera | None:
@@ -29,10 +33,43 @@ def find_camera(coordinator: HubCoordinator, site_id: str, camera_id: int) -> Hu
 def camera_device_info(camera: HubCamera) -> DeviceInfo:
     return DeviceInfo(
         identifiers={(DOMAIN, camera_key(camera.site_id, camera.camera_id))},
+        via_device=(DOMAIN, camera.site_id),
         manufacturer="9Space",
         model="Monitor Hub Camera",
         name=f"{camera.site_name} {camera.label}",
     )
+
+
+def site_device_info(site: HubSite) -> DeviceInfo:
+    return DeviceInfo(
+        identifiers={(DOMAIN, site.site_id)},
+        manufacturer="9Space",
+        model="Snapshot Site",
+        name=site.display_name,
+    )
+
+
+class HubSiteEntity(CoordinatorEntity[HubCoordinator]):
+    _attr_has_entity_name = True
+
+    def __init__(self, entry: HubConfigEntry, site: HubSite, key: str) -> None:
+        super().__init__(entry.runtime_data.coordinator)
+        self.entry = entry
+        self.site_id = site.site_id
+        self._attr_unique_id = f"{site.site_id}_{key}"
+        self._attr_device_info = site_device_info(site)
+
+    @property
+    def site(self) -> HubSite | None:
+        return (self.coordinator.data or {}).get(self.site_id)
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.site is not None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        return {"site_id": self.site_id}
 
 
 class HubCameraEntity(CoordinatorEntity[HubCoordinator]):

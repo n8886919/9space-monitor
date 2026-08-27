@@ -11,7 +11,8 @@
   },
   "entity": {
     "binary_sensor": {
-      "snapshot_success": {"name": "Snapshot attempt"}
+      "snapshot_success": {"name": "Snapshot success"},
+      "site_reachable": {"name": "Site reachable"}
     },
     "sensor": {
       "snapshot_success_rate": {"name": "Snapshot success rate"},
@@ -20,8 +21,7 @@
       "snapshot_consecutive_failures": {"name": "Consecutive snapshot failures"},
       "snapshot_latency": {"name": "Snapshot latency"},
       "snapshot_age": {"name": "Snapshot age"},
-      "last_recording": {"name": "Last recording"},
-      "last_snapshot_attempt": {"name": "Last snapshot attempt"}
+      "site_last_seen": {"name": "Site last reachable"}
     }
   }
 }

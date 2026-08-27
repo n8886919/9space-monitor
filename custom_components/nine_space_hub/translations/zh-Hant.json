@@ -11,7 +11,8 @@
   },
   "entity": {
     "binary_sensor": {
-      "snapshot_success": {"name": "截圖嘗試"}
+      "snapshot_success": {"name": "截圖成功"},
+      "site_reachable": {"name": "站點可連線"}
     },
     "sensor": {
       "snapshot_success_rate": {"name": "截圖成功率"},
@@ -20,8 +21,7 @@
       "snapshot_consecutive_failures": {"name": "連續截圖失敗"},
       "snapshot_latency": {"name": "截圖延遲"},
       "snapshot_age": {"name": "截圖年齡"},
-      "last_recording": {"name": "上次錄影"},
-      "last_snapshot_attempt": {"name": "上次截圖嘗試"}
+      "site_last_seen": {"name": "站點上次可連線"}
     }
   }
 }
