@@ -1,8 +1,7 @@
-"""Authenticated Android notification log API backed by bounded SQLite."""
+"""Internal Android notification and Pikmin invite APIs backed by SQLite."""
 
 from __future__ import annotations
 
-import hmac
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -31,6 +30,7 @@ TEXT_LIMITS = {
 }
 EVENT_TYPES = {"posted", "removed"}
 PAYLOAD_FIELDS = {*TEXT_LIMITS, "event_type", "occurred_at", "extra"}
+MAX_INVITER_LENGTH = 256
 
 
 class ApiError(Exception):
@@ -130,6 +130,23 @@ def validate_notification(payload: Any, now: datetime) -> dict[str, Any]:
     return result
 
 
+def validate_invite(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        raise ApiError(422, "invalid_payload", "JSON body must be an object")
+    unknown = sorted(set(payload) - {"inviter"})
+    if unknown:
+        raise ApiError(422, "unknown_fields", f"unknown fields: {', '.join(unknown)}")
+    inviter = payload.get("inviter")
+    if not isinstance(inviter, str):
+        raise ApiError(422, "invalid_inviter", "inviter must be a string")
+    inviter = inviter.strip()
+    if not inviter:
+        raise ApiError(422, "invalid_inviter", "inviter must not be empty")
+    if len(inviter) > MAX_INVITER_LENGTH:
+        raise ApiError(422, "invalid_inviter", "inviter exceeds 256 characters")
+    return inviter
+
+
 class NotificationStore:
     """Small SQLite store; every operation uses its own connection."""
 
@@ -176,6 +193,15 @@ class NotificationStore:
                     ON notifications(occurred_at);
                 CREATE INDEX IF NOT EXISTS idx_notifications_package_name_id
                     ON notifications(package_name, id);
+                CREATE TABLE IF NOT EXISTS mushroom_invites (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    inviter TEXT NOT NULL,
+                    received_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_mushroom_invites_inviter
+                    ON mushroom_invites(inviter);
+                CREATE INDEX IF NOT EXISTS idx_mushroom_invites_received_at
+                    ON mushroom_invites(received_at);
                 """
             )
 
@@ -257,6 +283,53 @@ class NotificationStore:
             ).fetchone()
         return dict(row)
 
+    def insert_invite(self, inviter: str, now: datetime) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "INSERT INTO mushroom_invites (inviter, received_at) VALUES (?, ?)",
+                (inviter, format_timestamp(now)),
+            )
+            return int(cursor.lastrowid)
+
+    def list_invites(self, limit: int) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, inviter, received_at
+                FROM mushroom_invites
+                ORDER BY received_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def invite_stats(self) -> dict[str, Any]:
+        with self.connect() as connection:
+            totals = connection.execute(
+                """
+                SELECT COUNT(*) AS total_invites,
+                       COUNT(DISTINCT inviter) AS unique_inviters
+                FROM mushroom_invites
+                """
+            ).fetchone()
+            inviters = connection.execute(
+                """
+                SELECT
+                    inviter,
+                    COUNT(*) AS count,
+                    MAX(received_at) AS last_invited_at
+                FROM mushroom_invites
+                GROUP BY inviter
+                ORDER BY count DESC, last_invited_at DESC
+                """
+            ).fetchall()
+        return {
+            "total_invites": int(totals["total_invites"]),
+            "unique_inviters": int(totals["unique_inviters"]),
+            "inviters": [dict(row) for row in inviters],
+        }
+
     @staticmethod
     def _serialize(row: sqlite3.Row) -> dict[str, Any]:
         result = dict(row)
@@ -271,10 +344,12 @@ class NotificationServer(ThreadingHTTPServer):
         self,
         address: tuple[str, int],
         store: NotificationStore,
-        auth_token: str,
+        legacy_ignored_token: str | None = None,
     ) -> None:
+        # Keep the optional argument for callers of 0.1.x; authentication is no
+        # longer needed because the host port mapping is disabled in config.yaml.
+        del legacy_ignored_token
         self.store = store
-        self.auth_token = auth_token
         super().__init__(address, NotificationHandler)
 
 
@@ -288,7 +363,6 @@ class NotificationHandler(BaseHTTPRequestHandler):
             if path.path == "/healthz":
                 self.send_json(HTTPStatus.OK, {"status": "ok"})
                 return
-            self.require_auth()
             if path.path == "/api/v1/notifications":
                 query = parse_qs(path.query, keep_blank_values=True)
                 allowed = {"limit", "before_id", "package_name"}
@@ -309,6 +383,19 @@ class NotificationHandler(BaseHTTPRequestHandler):
             if path.path == "/api/v1/stats":
                 self.send_json(HTTPStatus.OK, self.server.store.stats())
                 return
+            if path.path == "/api/v1/invites/stats":
+                self.send_json(HTTPStatus.OK, self.server.store.invite_stats())
+                return
+            if path.path == "/api/v1/invites":
+                query = parse_qs(path.query, keep_blank_values=True)
+                if set(query) - {"limit"}:
+                    raise ApiError(400, "invalid_query", "unknown query parameter")
+                limit = self.parse_positive_int(query, "limit", 100, MAX_QUERY_LIMIT)
+                self.send_json(
+                    HTTPStatus.OK,
+                    {"invites": self.server.store.list_invites(limit)},
+                )
+                return
             raise ApiError(404, "not_found", "endpoint not found")
         except ApiError as exc:
             self.send_api_error(exc)
@@ -319,9 +406,8 @@ class NotificationHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         try:
             path = urlsplit(self.path)
-            if path.path != "/api/v1/notifications":
+            if path.path not in {"/api/v1/notifications", "/api/v1/invites"}:
                 raise ApiError(404, "not_found", "endpoint not found")
-            self.require_auth()
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
             if content_type != "application/json":
                 raise ApiError(415, "unsupported_media_type", "Content-Type must be application/json")
@@ -331,6 +417,11 @@ class NotificationHandler(BaseHTTPRequestHandler):
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 raise ApiError(400, "invalid_json", "request body is not valid JSON") from exc
             now = utc_now()
+            if path.path == "/api/v1/invites":
+                inviter = validate_invite(body)
+                invite_id = self.server.store.insert_invite(inviter, now)
+                self.send_json(HTTPStatus.CREATED, {"ok": True, "id": invite_id})
+                return
             payload = validate_notification(body, now)
             item = self.server.store.insert(payload, now)
             self.send_json(HTTPStatus.CREATED, item)
@@ -339,12 +430,6 @@ class NotificationHandler(BaseHTTPRequestHandler):
         except Exception:
             LOGGER.exception("Unhandled POST failure")
             self.send_api_error(ApiError(500, "internal_error", "internal server error"))
-
-    def require_auth(self) -> None:
-        authorization = self.headers.get("Authorization", "")
-        expected = f"Bearer {self.server.auth_token}"
-        if not hmac.compare_digest(authorization, expected):
-            raise ApiError(401, "unauthorized", "valid Bearer token required")
 
     def read_body(self) -> bytes:
         length_header = self.headers.get("Content-Length")
@@ -435,10 +520,6 @@ def load_options(path: Path) -> dict[str, Any]:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     options = load_options(Path("/data/options.json"))
-    token = options.get("auth_token")
-    if not isinstance(token, str) or len(token) < 24 or token == "CHANGE_ME":
-        LOGGER.error("auth_token must be configured with at least 24 characters")
-        return 2
     try:
         retention_days = int(options.get("retention_days", 30))
         max_rows = int(options.get("max_rows", 100000))
@@ -451,7 +532,7 @@ def main() -> int:
         LOGGER.error("Invalid add-on options: %s", exc)
         return 2
 
-    server = NotificationServer(("0.0.0.0", 8099), store, token)
+    server = NotificationServer(("0.0.0.0", 8099), store)
     LOGGER.info("Notification Log listening on port 8099")
     try:
         server.serve_forever()

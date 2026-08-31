@@ -1,9 +1,9 @@
 name: 9Space Notification Log
-version: "0.1.0"
+version: "0.2.0"
 slug: 9space_notification_log
 description: >-
-  Receives Android notification events from Tasker over an authenticated HTTP
-  API and stores them in a bounded SQLite database.
+  Stores Pikmin Bloom mushroom invite events and reports inviter counts and
+  latest invite times through a Home Assistant internal API.
 arch:
   - amd64
   - aarch64
@@ -13,16 +13,14 @@ boot: auto
 init: false
 
 ports:
-  8099/tcp: 8099
+  8099/tcp: null
 ports_description:
-  8099/tcp: Tasker notification ingestion API
+  8099/tcp: Internal notification ingestion API (host mapping disabled)
 
 options:
-  auth_token: ""
   retention_days: 30
   max_rows: 100000
 
 schema:
-  auth_token: password
   retention_days: int
   max_rows: int
