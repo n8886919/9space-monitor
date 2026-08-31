@@ -63,6 +63,15 @@ class InviteApiTests(unittest.TestCase):
         connection.close()
         return response.status, payload
 
+    def request_html(self, path: str = "/") -> tuple[int, str, str]:
+        connection = http.client.HTTPConnection(*self.server.server_address, timeout=2)
+        connection.request("GET", path)
+        response = connection.getresponse()
+        content_type = response.getheader("Content-Type", "")
+        body = response.read().decode("utf-8")
+        connection.close()
+        return response.status, content_type, body
+
     def post_at(self, inviter: str, now: datetime) -> tuple[int, dict]:
         with patch.object(APP, "utc_now", return_value=now):
             return self.request("POST", "/api/v1/invites", {"inviter": inviter})
@@ -132,6 +141,27 @@ class InviteApiTests(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual(1, payload["total_invites"])
         self.assertEqual("Alice", payload["inviters"][0]["inviter"])
+
+    def test_web_ui_lists_stats_and_escapes_inviter_html(self) -> None:
+        for inviter in ('<script>alert("x")</script>', "小明", "小明"):
+            status, _ = self.request("POST", "/api/v1/invites", {"inviter": inviter})
+            self.assertEqual(201, status)
+        status, content_type, body = self.request_html()
+        self.assertEqual(200, status)
+        self.assertEqual("text/html; charset=utf-8", content_type)
+        self.assertIn("Pikmin 蘑菇邀請", body)
+        self.assertIn("總邀請次數", body)
+        self.assertIn("小明", body)
+        self.assertIn(">2</td>", body)
+        self.assertIn("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;", body)
+        self.assertNotIn('<script>alert("x")</script>', body)
+
+    def test_addon_config_enables_ingress_without_host_port_mapping(self) -> None:
+        config = (APP_PATH.parent / "config.yaml").read_text()
+        self.assertIn('version: "0.3.0"', config)
+        self.assertIn("ingress: true", config)
+        self.assertIn("ingress_port: 8099", config)
+        self.assertIn("  8099/tcp: null", config)
 
 
 if __name__ == "__main__":

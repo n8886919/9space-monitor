@@ -42,6 +42,16 @@ SQLite data is stored at `/data/notifications.sqlite3` and is included in normal
 Home Assistant add-on backups. Invite contents are not written to the add-on
 log.
 
+## Web UI
+
+Open the add-on page in Home Assistant and select **Open Web UI**, or use the
+**Pikmin 蘑菇邀請** sidebar entry. Home Assistant Ingress keeps the page behind
+your Home Assistant login while the add-on's host port remains disabled.
+
+The page shows total invites, unique inviters, and a table of player name,
+invite count, and latest invite time in UTC. It is read-only and uses the same
+SQLite aggregation as `GET /api/v1/invites/stats`.
+
 ## Pikmin invite API
 
 Invite endpoints are available only on the Home Assistant internal app network.
@@ -164,7 +174,7 @@ name cannot produce malformed JSON.
 
 ## Existing notification API compatibility
 
-Version 0.2.0 keeps the existing server, container port, database, health
+Version 0.3.0 keeps the existing server, container port, database, health
 endpoint, generic notification paths, and responses. Authentication is removed
 as requested, together with the host port mapping:
 

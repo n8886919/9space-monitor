@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -31,6 +32,77 @@ TEXT_LIMITS = {
 EVENT_TYPES = {"posted", "removed"}
 PAYLOAD_FIELDS = {*TEXT_LIMITS, "event_type", "occurred_at", "extra"}
 MAX_INVITER_LENGTH = 256
+
+
+def render_invite_page(stats: dict[str, Any]) -> str:
+    rows = []
+    for item in stats["inviters"]:
+        inviter = html.escape(str(item["inviter"]), quote=True)
+        count = int(item["count"])
+        timestamp = html.escape(str(item["last_invited_at"]), quote=True)
+        rows.append(
+            "<tr>"
+            f"<td class=\"player\">{inviter}</td>"
+            f"<td class=\"count\">{count}</td>"
+            f"<td><time datetime=\"{timestamp}\">{timestamp}</time></td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append('<tr><td class="empty" colspan="3">目前還沒有邀請紀錄</td></tr>')
+
+    total = int(stats["total_invites"])
+    unique = int(stats["unique_inviters"])
+    return f"""<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pikmin 蘑菇邀請</title>
+  <style>
+    :root {{ color-scheme: light dark; font-family: system-ui, sans-serif; }}
+    body {{ margin: 0; background: #f6f7f3; color: #20251d; }}
+    main {{ width: min(920px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; }}
+    header {{ display: flex; align-items: end; justify-content: space-between; gap: 16px; }}
+    h1 {{ margin: 0; font-size: clamp(1.5rem, 4vw, 2.25rem); }}
+    .refresh {{ color: #356a2b; font-weight: 650; text-decoration: none; }}
+    .summary {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 22px 0; }}
+    .card {{ padding: 18px; border: 1px solid #d9dfd2; border-radius: 14px; background: #fff; }}
+    .value {{ display: block; font-size: 1.8rem; font-weight: 750; }}
+    .label {{ color: #687061; }}
+    .table-wrap {{ overflow-x: auto; border: 1px solid #d9dfd2; border-radius: 14px; background: #fff; }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    th, td {{ padding: 14px 16px; text-align: left; border-bottom: 1px solid #e6eadf; }}
+    th {{ color: #687061; font-size: .85rem; }}
+    tr:last-child td {{ border-bottom: 0; }}
+    .player {{ font-weight: 700; }}
+    .count {{ font-variant-numeric: tabular-nums; }}
+    .empty {{ padding: 32px; text-align: center; color: #687061; }}
+    time {{ white-space: nowrap; }}
+    @media (prefers-color-scheme: dark) {{
+      body {{ background: #11150f; color: #edf2e9; }}
+      .card, .table-wrap {{ background: #1b2118; border-color: #394334; }}
+      th, td {{ border-color: #30392c; }}
+      .label, th, .empty {{ color: #aeb9a8; }}
+      .refresh {{ color: #9bd58d; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>Pikmin 蘑菇邀請</h1><a class="refresh" href="./">重新整理</a></header>
+    <section class="summary" aria-label="邀請摘要">
+      <div class="card"><span class="value">{total}</span><span class="label">總邀請次數</span></div>
+      <div class="card"><span class="value">{unique}</span><span class="label">邀請玩家數</span></div>
+    </section>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>玩家</th><th>邀請次數</th><th>最近邀請時間（UTC）</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>"""
 
 
 class ApiError(Exception):
@@ -360,6 +432,9 @@ class NotificationHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         try:
             path = urlsplit(self.path)
+            if path.path in {"/", "/index.html"}:
+                self.send_html(HTTPStatus.OK, render_invite_page(self.server.store.invite_stats()))
+                return
             if path.path == "/healthz":
                 self.send_json(HTTPStatus.OK, {"status": "ok"})
                 return
@@ -493,6 +568,17 @@ class NotificationHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_html(self, status: int, payload: str) -> None:
+        body = payload.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)

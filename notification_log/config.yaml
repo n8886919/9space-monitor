@@ -1,5 +1,5 @@
 name: 9Space Notification Log
-version: "0.2.0"
+version: "0.3.0"
 slug: 9space_notification_log
 description: >-
   Stores Pikmin Bloom mushroom invite events and reports inviter counts and
@@ -11,6 +11,11 @@ arch:
 startup: services
 boot: auto
 init: false
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:mushroom
+panel_title: Pikmin 蘑菇邀請
+panel_admin: true
 
 ports:
   8099/tcp: null
