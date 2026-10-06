@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import Executor, ThreadPoolExecutor
 import json
 import time
 import urllib.error
@@ -99,17 +100,19 @@ async def default_fetch(url: str, timeout_seconds: int) -> tuple[int, str, bytes
     return await asyncio.to_thread(fetch)
 
 
-async def default_health_probe(base_url: str, timeout_seconds: int) -> bool:
+async def default_health_probe(
+    base_url: str, timeout_seconds: int, *, executor: Executor | None = None,
+) -> bool:
     def probe() -> bool:
         url = f"{base_url}/healthz"
         opener = urllib.request.build_opener(_NoRedirect())
         with opener.open(url, timeout=timeout_seconds) as response:
             return response.geturl() == url and response.status == 200
-    return await asyncio.to_thread(probe)
+    return await asyncio.get_running_loop().run_in_executor(executor, probe)
 
 
 class SiteHealthMonitor:
-    """Bounded site-level probe loop independent from camera snapshot results."""
+    """Site-level probes with their own bounded pool, independent from snapshot work."""
 
     def __init__(
         self,
@@ -128,11 +131,23 @@ class SiteHealthMonitor:
         self.timeout_seconds = timeout_seconds
         self.concurrency = concurrency
         self._task: asyncio.Task[None] | None = None
+        self._executor: ThreadPoolExecutor | None = None
+
+    async def _probe(self, site: SnapshotSite) -> bool:
+        if self.probe is default_health_probe:
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(
+                    max_workers=self.concurrency, thread_name_prefix="hub-health",
+                )
+            return await default_health_probe(
+                site.base_url, self.timeout_seconds, executor=self._executor,
+            )
+        return await self.probe(site.base_url, self.timeout_seconds)
 
     async def _attempt(self, site: SnapshotSite) -> None:
         try:
             reachable = bool(await asyncio.wait_for(
-                self.probe(site.base_url, self.timeout_seconds), timeout=self.timeout_seconds
+                self._probe(site), timeout=self.timeout_seconds
             ))
         except asyncio.CancelledError:
             raise
@@ -164,6 +179,11 @@ class SiteHealthMonitor:
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        executor, self._executor = self._executor, None
+        if executor is not None:
+            # Pending jobs are cancelled; running HTTP probes retain their socket timeout.
+            # Do not block the event loop while those bounded workers finish.
+            executor.shutdown(wait=False, cancel_futures=True)
 
 
 class SnapshotScheduler:

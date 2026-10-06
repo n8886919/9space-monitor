@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import tempfile
+import threading
 import unittest
+from unittest.mock import patch
 
 from nine_space_hub.scheduler import SiteHealthMonitor, SnapshotScheduler, SnapshotSite, load_options
 from nine_space_hub.snapshots import SnapshotStore
@@ -14,6 +17,80 @@ from nine_space_hub.state import CurrentState
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_health_probe_succeeds_while_snapshot_worker_pool_is_busy(self):
+        with tempfile.TemporaryDirectory() as root:
+            site = SnapshotSite("safe-site", "Safe", "http://example.invalid", (1,), 1, 2, 30)
+            state = CurrentState((site,)); store = SnapshotStore(os.path.join(root, "snap"))
+            started, release = threading.Event(), threading.Event()
+
+            def busy_snapshot_worker():
+                started.set()
+                release.wait(5)
+
+            class HealthyResponse:
+                status = 200
+                def geturl(self): return "http://example.invalid/healthz"
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+
+            async def run():
+                loop = asyncio.get_running_loop()
+                loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+                blocker = loop.run_in_executor(None, busy_snapshot_worker)
+                while not started.is_set():
+                    await asyncio.sleep(0)
+                monitor = SiteHealthMonitor((site,), state, timeout_seconds=1)
+                try:
+                    with patch("nine_space_hub.scheduler.urllib.request.build_opener") as opener:
+                        opener.return_value.open.return_value = HealthyResponse()
+                        for _ in range(3):
+                            await monitor.run_round()
+                        self.assertEqual(opener.return_value.open.call_count, 3)
+                        summary = state.sites(store, max_stale_seconds=120)[0]
+                        self.assertIs(summary["site_reachable"], True)
+                finally:
+                    release.set()
+                    await blocker
+                    await monitor.stop()
+
+            asyncio.run(run())
+
+    def test_health_worker_pool_closes_on_stop_and_restarts_cleanly(self):
+        site = SnapshotSite("safe-site", "Safe", "http://example.invalid", (1,), 1, 2, 30)
+        state = CurrentState((site,))
+        monitor = SiteHealthMonitor((site,), state, interval_seconds=3600)
+
+        class HealthyResponse:
+            status = 200
+            def geturl(self): return "http://example.invalid/healthz"
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+
+        async def run():
+            with patch("nine_space_hub.scheduler.urllib.request.build_opener") as opener:
+                opener.return_value.open.return_value = HealthyResponse()
+                async def wait_for_success():
+                    while not state._site_health.get("safe-site", {}).get("reachable"):
+                        await asyncio.sleep(0)
+                try:
+                    await monitor.start()
+                    await asyncio.wait_for(wait_for_success(), timeout=3)
+                    first_pool = monitor._executor
+                    await monitor.stop()
+                    with self.assertRaises(RuntimeError):
+                        first_pool.submit(lambda: True)
+                    state.record_site_health("safe-site", reachable=False, timestamp_ms=1)
+                    state.record_site_health("safe-site", reachable=False, timestamp_ms=1)
+                    state.record_site_health("safe-site", reachable=False, timestamp_ms=1)
+                    await monitor.start()
+                    await asyncio.wait_for(wait_for_success(), timeout=3)
+                    self.assertIsNot(monitor._executor, first_pool)
+                    self.assertEqual(opener.return_value.open.call_count, 2)
+                finally:
+                    await monitor.stop()
+
+        asyncio.run(run())
+
     def test_options_only_contain_global_hub_limits(self):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, "options.json")

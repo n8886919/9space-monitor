@@ -2,6 +2,13 @@
 
 Updated: 2026-10-07
 
+## 2026-10-07 Hub health worker isolation
+
+- Hub source `0.3.8` 將 `/healthz` HTTP probe 移至專用工作池，production 最多 4 workers，與 snapshot／檔案工作分開。停止時取消 pending jobs 並關閉工作池；restart 建立新工作池。
+- 60 秒探測間隔、2 秒 timeout、連續 3 次失敗判紅與一次成功恢復的判斷不變。
+- 抓圖工作池飽和的 fake regression 與工作池 stop／restart lifecycle tests PASS；Hub `42/42`、syntax、diff check PASS。Root suite `102/104` PASS，仍為先前已確認的兩項 Notification Log FAIL。
+- 排隊造成的誤報機制已由 host test 驗證修正；實際站點的網路延遲／負載與持續觀察另行驗證。
+
 ## 2026-10-07 Hub toggle persistence
 
 - Hub source `0.3.7` 將每個 site/channel 的啟用選擇保存於既有 bounded、atomic site registry；restart／更新後載入，heartbeat 不覆蓋仍存在的頻道選擇。
@@ -16,7 +23,7 @@ Updated: 2026-10-07
 
 - Branch: `main`.
 - Functional release history 只以 fast-forward push 至 `origin/main`；未 force push、未改寫歷史。
-- Source identities: `9Space Snapshot` app `0.3.14` (`9space_snapshot`), `9Space Hub` app `0.3.7` (`9space_hub`), `9Space Hub` integration `0.1.3` (`nine_space_hub`), `9Space NVR Monitor` integration `0.2.11` (`nine_space_nvr_monitor`)。Hub integration `0.1.3` 已部署中央 HA；NVR integration `0.2.11` 已部署兩站。
+- Source identities: `9Space Snapshot` app `0.3.14` (`9space_snapshot`), `9Space Hub` app `0.3.8` (`9space_hub`), `9Space Hub` integration `0.1.3` (`nine_space_hub`), `9Space NVR Monitor` integration `0.2.11` (`nine_space_nvr_monitor`)。Hub integration `0.1.3` 已部署中央 HA；NVR integration `0.2.11` 已部署兩站。
 - 舊 Center source 已改名並重構為 `nine_space_hub/` Supervisor app，顯示名稱 `9Space Hub`／`9Space 中樞`。
 - Hub 已移除 generic telemetry ingest、NVR live／recording current state、HA/Ping producer 與重複 entities；只負責 snapshot registration、跨站拉圖、last-good JPEG 與 RAM since-restart 成功率／成功失敗 counters。
 - Hub 不再保存或要求 per-site options。Snapshot app 只新增一個 `hub_ip` hostname；HTTP scheme、Hub port/path 與站點 Snapshot port 固定。registration 不傳 URL，Hub 由 Tailscale peer 或 Hub MagicDNS suffix 加 `site_id` 自動推導站點 hostname。

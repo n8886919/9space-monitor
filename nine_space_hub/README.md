@@ -23,6 +23,11 @@ snapshot_store_limit_mb: 1024
 snapshot_refresh_seconds: 30
 ```
 
+站點分頁顏色由獨立的 `/healthz` 探測決定：每輪完成後等待 60 秒，timeout 為 2 秒，
+連續 3 次失敗判離線，一次成功恢復。Health probe 使用最多 4 個 worker 的專用工作池，
+與抓圖及檔案工作分開；app 停止時關閉工作池。`max_stale_seconds` 只控制圖片 freshness，
+`snapshot_refresh_seconds` 只控制抓圖排程，兩者不控制站點分頁顏色。
+
 Debug Web UI 的每個 CH 可用 toggle 暫停或恢復該 channel 的 snapshot refresh；
 啟用設定與站點 registration 一起保存在 `/data/registered_sites.json`，Hub restart／更新後沿用。
 只有設定成功寫入後才回報切換成功；寫入失敗會保留原設定並回報失敗。
