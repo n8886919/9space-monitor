@@ -8,7 +8,9 @@ Updated: 2026-10-07
 - 舊 registry 相容載入並預設啟用；移除的 channel 清除設定，新增 channel 預設啟用。保存失敗回去敏 `503` 且不改 RAM 或原檔案；health／attempt／counters 仍只在 RAM。
 - Hub targeted tests `40/40`、compileall 與 `git diff --check` PASS，包含 restart、heartbeat、舊格式、寫入失敗與 concurrent choices。
 - Root suite `100/102` PASS；Notification Log 的版本與 auth contract 共兩項 FAIL，在未修改的 `HEAD` 上亦可重現，不屬本次 Hub 變更。
-- 以下部署資訊仍為先前 last-known；本次實機更新另行驗證。
+- Source commit `9e5e0bb` 已 push 至既有 `origin/main`。GitHub CI：hassfest PASS，validate 因上述兩項既有 Notification Log 測試 FAIL。
+- 中央 HA 已透過既有 managed repository UI 更新 Hub `0.3.6` → `0.3.7`；更新前已勾選 Supervisor scoped backup。UI version／running 與更新後 startup complete PASS，未見 ERROR／traceback。
+- Restart 設定保留由 fake-based tests 驗證；本次實機未額外切換頻道或重啟作 persistence 驗收。以下其他部署資訊仍為先前 last-known。
 
 ## Current
 
@@ -28,7 +30,7 @@ Updated: 2026-10-07
 
 ## Deployed
 
-- 中央 Home Assistant 已部署 `custom_components/nine_space_hub` `0.1.3`；Hub app `0.3.6` 正常。升級 migration 由 config entry v1 升至 v2，精準移除 `119` 個舊 Hub NVR／錄影／last-attempt registry entries，建立 8 站／89 鏡頭共 `728` 個 snapshot-only／site entities，無 `_2` replacement。未直接編輯 `.storage`，部署前已保存 scoped source、entity-registry 與 config-entry rollback。
+- 中央 Home Assistant 已部署 `custom_components/nine_space_hub` `0.1.3`；Hub app 本次更新至 `0.3.7` 並確認正常執行。先前升級 migration 由 config entry v1 升至 v2，精準移除 `119` 個舊 Hub NVR／錄影／last-attempt registry entries，建立 8 站／89 鏡頭共 `728` 個 snapshot-only／site entities，無 `_2` replacement。未直接編輯 `.storage`，先前部署前已保存 scoped source、entity-registry 與 config-entry rollback。
 - daan-forest 目前 Snapshot app `0.3.13`；chengde 目前 Snapshot app `0.3.13`。兩者 state `started`；source 中的 Snapshot `0.3.14` 尚未部署。
 - Snapshot app 以 bounded 直接 MagicDNS lookup 解決 container split-DNS 缺失；同機 Hub 使用 Supervisor internal hostname。Hub discovery 已自動註冊 `daan-forest` 與 `chengde` 共兩站。
 - daan-forest Tailscale app 已由使用者關閉 userspace networking；daan-forest→chengde `8222/healthz` PASS，ACL allow-all 無需修改。
