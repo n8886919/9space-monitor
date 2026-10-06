@@ -249,8 +249,17 @@ credentials、Authorization、RTSP/CGI URL、raw body 或 snapshot body。
 不接受 URL、events、live/recording fields 或額外欄位。Hub 以未套用 proxy headers 的
 實際 Tailscale TCP peer 加固定 port `8222` 建立 Snapshot API origin；Supervisor NAT
 隱藏 peer 時使用已驗證的 `site_ip`，同機 site 使用 Supervisor internal Snapshot
-hostname。無法安全驗證時回 `422`。註冊只留 RAM；Hub restart 後由 Snapshot app
-下一輪重新建立。Hub 失聯不得影響 local NVR probe、recording query 或 snapshot API。
+hostname。無法安全驗證時回 `422`。已驗證的站點設定與每頻道啟用選擇 bounded、atomic
+replace 地保存於 Hub app data；Hub restart 後載入，下一輪 registration 更新站點
+mapping 並保留仍存在的頻道選擇。Hub 失聯不得影響 local NVR probe、recording query 或 snapshot API。
+
+### `PUT /api/v1/sites/{site_id}/cameras/{camera_id}/enabled`
+
+只接受 `{"enabled": true}` 或 `{"enabled": false}`；已知頻道的設定成功保存後回
+`200` 與相同 JSON。未知站點／頻道回 `404`，無效設定回 `422`；保存失敗回
+`503`、`{"detail":"channel_settings_unavailable"}`，保留原啟用設定且不暴露底層錯誤。
+舊 registry 沒有啟用設定時、新增 channel 時預設啟用。這是截圖更新設定，不控制
+實體攝影機或 NVR 錄影；attempt／health／counter 仍只保存在 RAM，沒有 telemetry history。
 
 ### `GET /api/v1/sites`
 

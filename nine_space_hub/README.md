@@ -24,7 +24,10 @@ snapshot_refresh_seconds: 30
 ```
 
 Debug Web UI 的每個 CH 可用 toggle 暫停或恢復該 channel 的 snapshot refresh；
-此 enabled 狀態和 snapshot counters 一樣只保存在 RAM，Hub restart 後回復為全部啟用。
+啟用設定與站點 registration 一起保存在 `/data/registered_sites.json`，Hub restart／更新後沿用。
+只有設定成功寫入後才回報切換成功；寫入失敗會保留原設定並回報失敗。
+舊版未保存的設定與新增 channel 預設啟用；正常 heartbeat 不覆蓋選擇，從站點 mapping
+移除的 channel 會清除其設定。snapshot counters 仍只保存在 RAM，restart 後歸零。
 有 last-good JPEG 時，圖片卡在 freshness 範圍內顯示綠框，過期則顯示紅框。
 
 站點資料由各站 Snapshot app 以 snapshot-only heartbeat 自動註冊。Snapshot app options 中：

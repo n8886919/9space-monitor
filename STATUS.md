@@ -1,12 +1,20 @@
 # Status
 
-Updated: 2026-08-27
+Updated: 2026-10-07
+
+## 2026-10-07 Hub toggle persistence
+
+- Hub source `0.3.7` 將每個 site/channel 的啟用選擇保存於既有 bounded、atomic site registry；restart／更新後載入，heartbeat 不覆蓋仍存在的頻道選擇。
+- 舊 registry 相容載入並預設啟用；移除的 channel 清除設定，新增 channel 預設啟用。保存失敗回去敏 `503` 且不改 RAM 或原檔案；health／attempt／counters 仍只在 RAM。
+- Hub targeted tests `40/40`、compileall 與 `git diff --check` PASS，包含 restart、heartbeat、舊格式、寫入失敗與 concurrent choices。
+- Root suite `100/102` PASS；Notification Log 的版本與 auth contract 共兩項 FAIL，在未修改的 `HEAD` 上亦可重現，不屬本次 Hub 變更。
+- 以下部署資訊仍為先前 last-known；本次實機更新另行驗證。
 
 ## Current
 
 - Branch: `main`.
 - Functional release history 只以 fast-forward push 至 `origin/main`；未 force push、未改寫歷史。
-- Source identities: `9Space Snapshot` app `0.3.14` (`9space_snapshot`), `9Space Hub` app `0.3.6` (`9space_hub`), `9Space Hub` integration `0.1.3` (`nine_space_hub`), `9Space NVR Monitor` integration `0.2.11` (`nine_space_nvr_monitor`)。Hub integration `0.1.3` 已部署中央 HA；NVR integration `0.2.11` 已部署兩站。
+- Source identities: `9Space Snapshot` app `0.3.14` (`9space_snapshot`), `9Space Hub` app `0.3.7` (`9space_hub`), `9Space Hub` integration `0.1.3` (`nine_space_hub`), `9Space NVR Monitor` integration `0.2.11` (`nine_space_nvr_monitor`)。Hub integration `0.1.3` 已部署中央 HA；NVR integration `0.2.11` 已部署兩站。
 - 舊 Center source 已改名並重構為 `nine_space_hub/` Supervisor app，顯示名稱 `9Space Hub`／`9Space 中樞`。
 - Hub 已移除 generic telemetry ingest、NVR live／recording current state、HA/Ping producer 與重複 entities；只負責 snapshot registration、跨站拉圖、last-good JPEG 與 RAM since-restart 成功率／成功失敗 counters。
 - Hub 不再保存或要求 per-site options。Snapshot app 只新增一個 `hub_ip` hostname；HTTP scheme、Hub port/path 與站點 Snapshot port 固定。registration 不傳 URL，Hub 由 Tailscale peer 或 Hub MagicDNS suffix 加 `site_id` 自動推導站點 hostname。

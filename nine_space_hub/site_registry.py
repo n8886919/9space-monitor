@@ -11,6 +11,7 @@ import threading
 from urllib.parse import urlsplit
 
 from .scheduler import SnapshotSite
+from .snapshots import validate_camera_id
 from .validation import RegistrationValidationError, validate_registration
 
 MAX_REGISTERED_SITES = 32
@@ -54,7 +55,7 @@ def _valid_base_url(value: object) -> str:
 
 def _decode_site(raw: object, refresh_seconds: int) -> SnapshotSite:
     expected = {"site_id", "display_name", "base_url", "channels", "concurrency", "timeout_seconds"}
-    if not isinstance(raw, dict) or set(raw) != expected:
+    if not isinstance(raw, dict) or set(raw) not in (expected, expected | {"disabled_channels"}):
         raise ValueError("invalid_site_registry")
     try:
         registration = validate_registration({
@@ -78,7 +79,19 @@ def _decode_site(raw: object, refresh_seconds: int) -> SnapshotSite:
     )
 
 
-def _encode_site(site: SnapshotSite) -> dict[str, object]:
+def _decode_disabled(raw: dict[str, object], site: SnapshotSite) -> set[tuple[str, int]]:
+    disabled = raw.get("disabled_channels", [])
+    if (
+        not isinstance(disabled, list)
+        or len(disabled) > len(site.channels)
+        or any(type(channel) is not int or channel not in site.channels for channel in disabled)
+        or len(set(disabled)) != len(disabled)
+    ):
+        raise ValueError("invalid_site_registry")
+    return {(site.site_id, channel) for channel in disabled}
+
+
+def _encode_site(site: SnapshotSite, disabled: set[tuple[str, int]]) -> dict[str, object]:
     return {
         "site_id": site.site_id,
         "display_name": site.display_name,
@@ -86,6 +99,7 @@ def _encode_site(site: SnapshotSite) -> dict[str, object]:
         "channels": list(site.channels),
         "concurrency": site.concurrency,
         "timeout_seconds": site.timeout_seconds,
+        "disabled_channels": sorted(channel for key, channel in disabled if key == site.site_id),
     }
 
 
@@ -96,12 +110,14 @@ class SiteRegistry:
         self.path = Path(path)
         self._lock = threading.Lock()
         self._sites: dict[str, SnapshotSite] = {}
+        self._disabled: set[tuple[str, int]] = set()
 
     def load(self, *, refresh_seconds: int) -> tuple[SnapshotSite, ...]:
         try:
             raw_bytes = self.path.read_bytes()
         except FileNotFoundError:
             self._sites = {}
+            self._disabled = set()
             return ()
         if len(raw_bytes) > MAX_REGISTRY_BYTES:
             raise ValueError("site_registry_too_large")
@@ -120,8 +136,35 @@ class SiteRegistry:
         sites = tuple(_decode_site(item, refresh_seconds) for item in payload["sites"])
         if len({site.site_id for site in sites}) != len(sites):
             raise ValueError("invalid_site_registry")
+        disabled = set()
+        for raw, site in zip(payload["sites"], sites):
+            disabled.update(_decode_disabled(raw, site))
         self._sites = {site.site_id: site for site in sites}
+        self._disabled = disabled
         return sites
+
+    def disabled_cameras(self) -> set[tuple[str, int]]:
+        with self._lock:
+            return set(self._disabled)
+
+    def set_camera_enabled(self, site_id: str, camera_id: int, enabled: bool) -> bool:
+        """Persist a user choice before publishing it; heartbeat cannot overwrite it."""
+        validate_camera_id(camera_id)
+        if type(enabled) is not bool:
+            raise ValueError("invalid_enabled")
+        with self._lock:
+            site = self._sites.get(site_id)
+            if site is None or camera_id not in site.channels:
+                return False
+            updated = set(self._disabled)
+            if enabled:
+                updated.discard((site_id, camera_id))
+            else:
+                updated.add((site_id, camera_id))
+            if updated != self._disabled:
+                self._write(self._sites, updated)
+                self._disabled = updated
+            return True
 
     def upsert(self, site: SnapshotSite) -> bool:
         with self._lock:
@@ -129,26 +172,35 @@ class SiteRegistry:
                 return False
             updated = dict(self._sites)
             updated[site.site_id] = site
-            payload = {
-                "version": REGISTRY_VERSION,
-                "sites": [_encode_site(item) for item in updated.values()],
+            disabled = {
+                key for key in self._disabled
+                if key[0] != site.site_id or key[1] in site.channels
             }
-            encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
-            if len(encoded) > MAX_REGISTRY_BYTES:
-                raise ValueError("site_registry_too_large")
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temporary_name = None
-            try:
-                with tempfile.NamedTemporaryFile(
-                    mode="wb", dir=self.path.parent, prefix=f".{self.path.name}.", delete=False
-                ) as handle:
-                    temporary_name = handle.name
-                    handle.write(encoded)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(temporary_name, self.path)
-            finally:
-                if temporary_name is not None:
-                    Path(temporary_name).unlink(missing_ok=True)
+            self._write(updated, disabled)
             self._sites = updated
+            self._disabled = disabled
             return True
+
+    def _write(self, sites: dict[str, SnapshotSite], disabled: set[tuple[str, int]]) -> None:
+        """Atomically replace bounded configuration, called with the registry lock held."""
+        payload = {
+            "version": REGISTRY_VERSION,
+            "sites": [_encode_site(item, disabled) for item in sites.values()],
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+        if len(encoded) > MAX_REGISTRY_BYTES:
+            raise ValueError("site_registry_too_large")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_name = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", dir=self.path.parent, prefix=f".{self.path.name}.", delete=False
+            ) as handle:
+                temporary_name = handle.name
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_name, self.path)
+        finally:
+            if temporary_name is not None:
+                Path(temporary_name).unlink(missing_ok=True)

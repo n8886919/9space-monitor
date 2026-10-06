@@ -130,7 +130,7 @@ def create_app(
         else (() if sites is None else sites)
     )
     snapshot_store = snapshots or SnapshotStore(SNAPSHOT_ROOT, store_limit_bytes=store_limit)
-    current_state = state or CurrentState(active_sites)
+    current_state = state or CurrentState(active_sites, site_registry=registry)
 
     scheduler = SnapshotScheduler(
         active_sites,
@@ -263,13 +263,16 @@ def create_app(
             raise HTTPException(status_code=400, detail="invalid_json") from None
         if not isinstance(body, dict) or set(body) != {"enabled"} or type(body["enabled"]) is not bool:
             raise HTTPException(status_code=422, detail="invalid_enabled")
-        changed = await call_sync(
-            request,
-            request.app.state.current.set_camera_enabled,
-            site_id,
-            camera_id,
-            body["enabled"],
-        )
+        try:
+            changed = await call_sync(
+                request,
+                request.app.state.current.set_camera_enabled,
+                site_id,
+                camera_id,
+                body["enabled"],
+            )
+        except (OSError, ValueError):
+            raise HTTPException(status_code=503, detail="channel_settings_unavailable") from None
         if not changed:
             raise HTTPException(status_code=404, detail="camera_not_found")
         return JSONResponse({"enabled": body["enabled"]}, headers={"Cache-Control": "no-store"})

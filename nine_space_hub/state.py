@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:
     from .scheduler import SnapshotSite
+    from .site_registry import SiteRegistry
 
 MAX_SITES = 32
 
@@ -19,12 +20,13 @@ MAX_SITES = 32
 class CurrentState:
     """Keep current snapshot attempts and bounded counters in RAM."""
 
-    def __init__(self, sites: Iterable[SnapshotSite]) -> None:
+    def __init__(self, sites: Iterable[SnapshotSite], *, site_registry: SiteRegistry | None = None) -> None:
         self._lock = threading.RLock()
         self._sites = {site.site_id: site for site in sites}
         self._attempts: dict[tuple[str, int], dict[str, Any]] = {}
         self._counts: dict[tuple[str, int], dict[str, int]] = {}
-        self._disabled: set[tuple[str, int]] = set()
+        self._site_registry = site_registry
+        self._disabled = site_registry.disabled_cameras() if site_registry is not None else set()
         self._site_health: dict[str, dict[str, Any]] = {}
 
     def register(self, site: SnapshotSite) -> bool:
@@ -63,9 +65,13 @@ class CurrentState:
             return self.has_camera(site_id, camera_id) and (site_id, camera_id) not in self._disabled
 
     def set_camera_enabled(self, site_id: str, camera_id: int, enabled: bool) -> bool:
-        """Set one registered channel's bounded, in-memory enabled state."""
+        """Save a user choice before updating runtime state when a registry is configured."""
         with self._lock:
             if not self.has_camera(site_id, camera_id):
+                return False
+            if self._site_registry is not None and not self._site_registry.set_camera_enabled(
+                site_id, camera_id, enabled
+            ):
                 return False
             key = (site_id, camera_id)
             if enabled:

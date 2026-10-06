@@ -6,8 +6,9 @@ import os
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
-from nine_space_hub.app import create_app
+from nine_space_hub.app import APP_VERSION, create_app
 from nine_space_hub.scheduler import SnapshotSite
 from nine_space_hub.site_registry import SiteRegistry
 from nine_space_hub.snapshots import SnapshotStore
@@ -66,8 +67,8 @@ class HubAppTests(unittest.TestCase):
         page = body.decode()
         self.assertEqual(status, 200)
         self.assertEqual(headers["cache-control"], "no-store")
-        self.assertIn("static/styles.css?v=0.3.6", page)
-        self.assertIn("static/app.js?v=0.3.6", page)
+        self.assertIn(f"static/styles.css?v={APP_VERSION}", page)
+        self.assertIn(f"static/app.js?v={APP_VERSION}", page)
         self.assertNotIn("__APP_VERSION__", page)
 
     def test_snapshot_contract_and_statistics(self):
@@ -122,6 +123,55 @@ class HubAppTests(unittest.TestCase):
         site = json.loads(body)["sites"][0]
         self.assertIsNone(site["site_reachable"])
         self.assertIsNone(site["site_last_seen_at"])
+
+    def persistent_app(self):
+        registry = SiteRegistry(os.path.join(self.tempdir.name, "channel-settings.json"))
+        if not registry.path.exists():
+            registry.upsert(SnapshotSite(
+                "safe-site", "Safe", "http://100.64.0.10:8222", (1, 2), 1, 2, 30
+            ))
+        async def immediate(function, *args, **kwargs): return function(*args, **kwargs)
+        return create_app(snapshots=self.store, site_registry=registry, run_sync=immediate)
+
+    def test_channel_choices_survive_restart_and_heartbeat_without_persisting_counters(self):
+        app = self.persistent_app()
+        path = "/api/v1/sites/safe-site/cameras/1/enabled"
+        status, _, body = asyncio.run(asgi_request(app, "PUT", path, chunks=[b'{"enabled":false}']))
+        self.assertEqual((status, json.loads(body)), (200, {"enabled": False}))
+        app.state.current.record_snapshot_attempt(
+            "safe-site", 1, success=False, timestamp_ms=1, latency_ms=2, error_code="timeout"
+        )
+        restarted = self.persistent_app()
+        self.assertFalse(restarted.state.current.is_camera_enabled("safe-site", 1))
+        self.assertTrue(restarted.state.current.is_camera_enabled("safe-site", 2))
+        camera = restarted.state.current.sites(self.store, max_stale_seconds=120)[0]["cameras"][0]
+        self.assertEqual(camera["snapshot_failure_count"], 0)
+        self.assertIsNone(camera["latest_attempt"])
+        payload = json.dumps({
+            "site_id": "safe-site", "display_name": "Safe", "channels": [1, 2],
+            "concurrency": 1, "timeout_seconds": 2, "site_ip": None,
+        }).encode()
+        status, _, _ = asyncio.run(asgi_request(
+            restarted, "POST", "/api/v1/snapshot-sites/register", chunks=[payload],
+            client_host="100.64.0.10",
+        ))
+        self.assertEqual(status, 200)
+        self.assertFalse(self.persistent_app().state.current.is_camera_enabled("safe-site", 1))
+        status, _, _ = asyncio.run(asgi_request(restarted, "PUT", path, chunks=[b'{"enabled":true}']))
+        self.assertEqual(status, 200)
+        self.assertTrue(self.persistent_app().state.current.is_camera_enabled("safe-site", 1))
+
+    def test_failed_channel_setting_write_preserves_file_and_runtime(self):
+        app = self.persistent_app()
+        previous = app.state.site_registry.path.read_bytes()
+        with patch("nine_space_hub.site_registry.os.replace", side_effect=OSError("private error")):
+            status, _, body = asyncio.run(asgi_request(
+                app, "PUT", "/api/v1/sites/safe-site/cameras/1/enabled", chunks=[b'{"enabled":false}'],
+            ))
+        self.assertEqual((status, json.loads(body)), (503, {"detail": "channel_settings_unavailable"}))
+        self.assertTrue(app.state.current.is_camera_enabled("safe-site", 1))
+        self.assertEqual(app.state.site_registry.path.read_bytes(), previous)
+        self.assertTrue(self.persistent_app().state.current.is_camera_enabled("safe-site", 1))
 
     def test_restart_loads_registry_and_starts_health_monitor(self):
         registry = SiteRegistry(os.path.join(self.tempdir.name, "restart-sites.json"))
