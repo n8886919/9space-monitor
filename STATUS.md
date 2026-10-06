@@ -7,6 +7,7 @@ Updated: 2026-10-07
 - Hub source `0.3.8` 將 `/healthz` HTTP probe 移至專用工作池，production 最多 4 workers，與 snapshot／檔案工作分開。停止時取消 pending jobs 並關閉工作池；restart 建立新工作池。
 - 60 秒探測間隔、2 秒 timeout、連續 3 次失敗判紅與一次成功恢復的判斷不變。
 - 抓圖工作池飽和的 fake regression 與工作池 stop／restart lifecycle tests PASS；Hub `42/42`、syntax、diff check PASS。Root suite `102/104` PASS，仍為先前已確認的兩項 Notification Log FAIL。
+- Source commit `8d62210` 已 push 至既有 `origin/main`；中央 HA 透過既有 managed repository UI、勾選更新前 scoped backup，完成 `0.3.7` → `0.3.8`。UI version／running／startup complete PASS，日誌未見 ERROR／traceback。GitHub CI hassfest PASS，validate 仍因相同兩項 Notification Log 測試 FAIL。
 - 排隊造成的誤報機制已由 host test 驗證修正；實際站點的網路延遲／負載與持續觀察另行驗證。
 
 ## 2026-10-07 Hub toggle persistence
@@ -37,7 +38,7 @@ Updated: 2026-10-07
 
 ## Deployed
 
-- 中央 Home Assistant 已部署 `custom_components/nine_space_hub` `0.1.3`；Hub app 本次更新至 `0.3.7` 並確認正常執行。先前升級 migration 由 config entry v1 升至 v2，精準移除 `119` 個舊 Hub NVR／錄影／last-attempt registry entries，建立 8 站／89 鏡頭共 `728` 個 snapshot-only／site entities，無 `_2` replacement。未直接編輯 `.storage`，先前部署前已保存 scoped source、entity-registry 與 config-entry rollback。
+- 中央 Home Assistant 已部署 `custom_components/nine_space_hub` `0.1.3`；Hub app 本次更新至 `0.3.8` 並確認正常執行。先前升級 migration 由 config entry v1 升至 v2，精準移除 `119` 個舊 Hub NVR／錄影／last-attempt registry entries，建立 8 站／89 鏡頭共 `728` 個 snapshot-only／site entities，無 `_2` replacement。未直接編輯 `.storage`，先前部署前已保存 scoped source、entity-registry 與 config-entry rollback。
 - daan-forest 目前 Snapshot app `0.3.13`；chengde 目前 Snapshot app `0.3.13`。兩者 state `started`；source 中的 Snapshot `0.3.14` 尚未部署。
 - Snapshot app 以 bounded 直接 MagicDNS lookup 解決 container split-DNS 缺失；同機 Hub 使用 Supervisor internal hostname。Hub discovery 已自動註冊 `daan-forest` 與 `chengde` 共兩站。
 - daan-forest Tailscale app 已由使用者關閉 userspace networking；daan-forest→chengde `8222/healthz` PASS，ACL allow-all 無需修改。
